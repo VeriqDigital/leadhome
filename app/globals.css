@@ -1,26 +1,31 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f7f7f5;
+  --foreground: #17181c;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
+
+button, a { outline-offset: 3px; }
+button:focus-visible, a:focus-visible { outline: 2px solid #7770c8; }
+
+.dark { color-scheme: dark; --background: #111216; --foreground: #ececef; }
+.dark .dashboard-main { background: #111216; }
+.dark .dashboard-card,
+.dark .metric-card { background: #1a1b20; border-color: rgba(255,255,255,.08); box-shadow: none; }
+.dark .dashboard-card > header { border-color: rgba(255,255,255,.08); }
+.dark .dashboard-card [class*="border-black"] { border-color: rgba(255,255,255,.08); }
+.dark .dashboard-card button,
+.dark .metric-card span[class*="bg-[#f3"] { background: #292b31; color: #b7bbc5; }
+.dark input { border-color: rgba(255,255,255,.12); }
