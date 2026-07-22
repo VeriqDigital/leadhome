@@ -3,29 +3,32 @@ import { Bell, Plus } from "lucide-react";
 import Link from "next/link";
 export function Header({ name = "there" }: { name?: string }) {
   return (
-      <header className="flex items-start justify-between gap-5">
-        <div>
-          <h1 className="text-[25px] font-semibold tracking-[-0.035em] sm:text-[28px]">
-            Good morning, {name.split(" ")[0]}.
-          </h1>
-          <p className="mt-1.5 text-sm text-[#687080]">
-            Here&apos;s what&apos;s happening with your leads today.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <Link href="/leads/new" className="hidden h-11 items-center gap-2 rounded-[10px] bg-[#17181c] px-5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-black sm:flex">
-            <Plus className="size-4" />
-            New Lead
-          </Link>
-          <button
-            aria-label="Notifications"
-            className="relative grid size-11 place-items-center rounded-xl transition-colors hover:bg-white"
-          >
-            <Bell className="size-5" />
-            <span className="absolute right-2 top-2 size-1.5 rounded-full bg-[#17181c] ring-2 ring-[#f7f7f5]" />
-          </button>
-        </div>
-      </header>
+    <header className="flex items-start justify-between gap-5">
+      <div>
+        <h1 className="text-[25px] font-semibold tracking-[-0.035em] sm:text-[28px]">
+          Good morning, {name.split(" ")[0]}.
+        </h1>
+        <p className="mt-1.5 text-sm text-[#687080]">
+          Here&apos;s what&apos;s happening with your leads today.
+        </p>
+      </div>
+      <div className="flex items-center gap-3">
+        <Link
+          href="/leads/new"
+          className="hidden h-11 items-center gap-2 rounded-[10px] bg-[#17181c] px-5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-black sm:flex"
+        >
+          <Plus className="size-4" />
+          New Lead
+        </Link>
+        <button
+          aria-label="Notifications"
+          className="relative grid size-11 place-items-center rounded-xl transition-colors hover:bg-white"
+        >
+          <Bell className="size-5" />
+          <span className="absolute right-2 top-2 size-1.5 rounded-full bg-[#17181c] ring-2 ring-[#f7f7f5]" />
+        </button>
+      </div>
+    </header>
   );
 }
 export function DashboardCard({
@@ -38,8 +41,8 @@ export function DashboardCard({
   children: React.ReactNode;
 }) {
   return (
-    <section className="dashboard-card rounded-2xl border border-black/[0.055] bg-white shadow-[0_8px_30px_rgba(23,24,28,0.035)]">
-      <header className="flex min-h-16 items-center justify-between border-b border-black/[0.06] px-6">
+    <section className="dashboard-card rounded-2xl border border-black/5.5 bg-white shadow-[0_8px_30px_rgba(23,24,28,0.035)]">
+      <header className="flex min-h-16 items-center justify-between border-b border-black/6 px-6">
         <h2 className="text-[15px] font-semibold tracking-[-0.01em]">
           {title}
         </h2>
@@ -65,7 +68,7 @@ export function MetricCard({
   tone: string;
 }) {
   return (
-    <article className="metric-card relative min-h-[132px] rounded-2xl border border-black/[0.055] bg-white p-5 shadow-[0_7px_24px_rgba(23,24,28,0.03)]">
+    <article className="metric-card relative min-h-33 rounded-2xl border border-black/5.5 bg-white p-5 shadow-[0_7px_24px_rgba(23,24,28,0.03)]">
       <p className="text-sm font-semibold">{label}</p>
       <p className="mt-2 text-[27px] font-semibold leading-none tracking-[-0.04em]">
         {value}
@@ -109,7 +112,7 @@ export function LeadRow({
   };
 }) {
   return (
-    <li className="grid min-h-[72px] grid-cols-[42px_minmax(120px,1.15fr)_70px_100px_minmax(150px,1.35fr)] items-center gap-3 border-b border-black/[0.055] px-6 last:border-b-0 max-sm:grid-cols-[42px_1fr_auto] max-sm:py-3">
+    <li className="grid min-h-18 grid-cols-[42px_minmax(120px,1.15fr)_70px_100px_minmax(150px,1.35fr)] items-center gap-3 border-b border-black/5.5 px-6 last:border-b-0 max-sm:grid-cols-[42px_1fr_auto] max-sm:py-3">
       <span className="grid size-10 place-items-center rounded-full bg-[#f2f3f5] text-xs font-medium text-[#5e6674]">
         {lead.initials}
       </span>
@@ -163,7 +166,7 @@ export function TaskRow({
   urgent?: boolean;
 }) {
   return (
-    <li className="flex min-h-[75px] items-center gap-3 border-b border-black/[0.055] last:border-0">
+    <li className="flex min-h-18.75 items-center gap-3 border-b border-black/5.5 last:border-0">
       <span
         aria-hidden
         className="size-5 shrink-0 rounded-[5px] border border-[#d4d7db] bg-white"
