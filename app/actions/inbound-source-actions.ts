@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth-user";
 import {
   createInboundSource,
+  createInboundTestLead,
   deleteInboundSource,
   rotateInboundSource,
   setInboundSourceActive,
@@ -15,6 +16,7 @@ export type SourceActionState = {
   message?: string;
   token?: string;
   sourceName?: string;
+  leadId?: string;
 };
 
 export async function createInboundSourceAction(
@@ -65,4 +67,33 @@ export async function deleteInboundSourceAction(formData: FormData) {
   if (!sourceId.success) return;
   await deleteInboundSource(user.id, sourceId.data);
   revalidatePath("/settings");
+}
+
+export async function testInboundSourceAction(
+  _state: SourceActionState,
+  formData: FormData,
+): Promise<SourceActionState> {
+  const user = await requireUser();
+  const sourceId = inboundSourceIdSchema.safeParse(formData.get("sourceId"));
+  if (!sourceId.success) {
+    return { message: "Choose an active website source and try again." };
+  }
+
+  try {
+    const lead = await createInboundTestLead(user.id, sourceId.data);
+    if (!lead) {
+      return { message: "This source is unavailable or disabled." };
+    }
+    revalidatePath("/");
+    revalidatePath("/leads");
+    return {
+      success: true,
+      message: "Test lead created successfully.",
+      leadId: lead.id,
+    };
+  } catch {
+    return {
+      message: "We couldn't create a test lead. Please try again.",
+    };
+  }
 }

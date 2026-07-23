@@ -35,8 +35,6 @@ function Logo() {
     <div className="flex items-center gap-3">
       <span className="relative grid size-9 place-items-center rounded-[11px] bg-white text-neutral-950">
         <Home className="size-4.5" strokeWidth={2.4} />
-        <span className="absolute -left-1 top-2.5 h-1.5 w-2 rounded-full bg-white" />
-        <span className="absolute -left-1 top-5 h-1.5 w-2 rounded-full bg-white/60" />
       </span>
       <span className="text-[21px] font-semibold tracking-[-0.02em] text-white">
         LeadHome

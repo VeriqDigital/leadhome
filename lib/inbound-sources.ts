@@ -30,3 +30,23 @@ export function setInboundSourceActive(userId: string, sourceId: string, isActiv
 export function deleteInboundSource(userId: string, sourceId: string) {
   return prisma.inboundSource.deleteMany({ where: { id: sourceId, userId } });
 }
+
+export async function createInboundTestLead(userId: string, sourceId: string) {
+  const source = await prisma.inboundSource.findFirst({
+    where: { id: sourceId, userId, isActive: true },
+    select: { id: true },
+  });
+  if (!source) return null;
+
+  return prisma.lead.create({
+    data: {
+      userId,
+      name: "LeadHome Test Lead",
+      email: "test@leadhome.local",
+      message: "Test submission from Website Sources settings",
+      source: "WEBSITE",
+      status: "NEW",
+    },
+    select: { id: true },
+  });
+}

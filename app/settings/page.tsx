@@ -9,10 +9,12 @@ export default async function SettingsPage() {
   const user = await requireUser();
   const requestHeaders = await headers();
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
-  const protocol = requestHeaders.get("x-forwarded-proto") ?? "http";
+  const protocol =
+    requestHeaders.get("x-forwarded-proto") ??
+    (host?.startsWith("localhost") ? "http" : "https");
   const endpoint = host
     ? `${protocol}://${host}/api/inbound/forms`
-    : "https://your-leadhome.example/api/inbound/forms";
+    : "http://localhost:3000/api/inbound/forms";
   const sources = await prisma.inboundSource.findMany({
     where: { userId: user.id },
     orderBy: { createdAt: "desc" },
