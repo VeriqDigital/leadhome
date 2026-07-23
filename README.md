@@ -1,4 +1,6 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+LeadHome is a Next.js CRM with authenticated, user-scoped lead management and secure website-form ingestion.
+
+See [Website form ingestion](docs/inbound-forms.md) for source-token setup, server integration examples, rate limiting, CORS behavior, and payload details.
 
 ## Getting Started
 

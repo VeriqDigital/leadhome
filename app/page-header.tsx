@@ -1,1 +1,21 @@
-export function PageHeader({ title, description, action }: { title: string; description: string; action?: React.ReactNode }) { return <header className="flex items-start justify-between gap-5"><div><h1 className="text-[25px] font-semibold tracking-[-0.035em] sm:text-[28px]">{title}</h1><p className="mt-1.5 text-sm text-[#687080]">{description}</p></div>{action}</header>; }
+export function PageHeader({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <header className="flex items-start justify-between gap-5">
+      <div>
+        <h1 className="text-[25px] font-semibold tracking-[-0.035em] sm:text-[28px]">
+          {title}
+        </h1>
+        <p className="mt-1.5 text-sm text-[#687080]">{description}</p>
+      </div>
+      {action}
+    </header>
+  );
+}

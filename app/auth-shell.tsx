@@ -1,2 +1,28 @@
 import { Home } from "lucide-react";
-export function AuthShell({ title, description, children }: { title: string; description: string; children: React.ReactNode }) { return <div className="fixed inset-0 z-50 grid min-h-screen place-items-center overflow-auto bg-[#f7f7f5] p-5 text-[#17181c]"><main className="w-full max-w-[430px] rounded-2xl border border-black/[0.06] bg-white p-7 text-[#17181c] shadow-[0_20px_70px_rgba(23,24,28,0.08)] sm:p-9"><div className="mb-8 flex items-center gap-3"><span className="grid size-10 place-items-center rounded-xl bg-[#17181c] text-white"><Home className="size-5" /></span><span className="text-xl font-semibold text-[#17181c]">LeadHome</span></div><h1 className="text-2xl font-semibold tracking-tight text-[#17181c]">{title}</h1><p className="mt-2 text-sm text-[#687080]">{description}</p>{children}</main></div>; }
+export function AuthShell({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 grid min-h-screen place-items-center overflow-auto bg-[#f7f7f5] p-5 text-[#17181c]">
+      <main className="w-full max-w-107.5 rounded-2xl border border-black/6 bg-white p-7 text-[#17181c] shadow-[0_20px_70px_rgba(23,24,28,0.08)] sm:p-9">
+        <div className="mb-8 flex items-center gap-3">
+          <span className="grid size-10 place-items-center rounded-xl bg-[#17181c] text-white">
+            <Home className="size-5" />
+          </span>
+          <span className="text-xl font-semibold text-[#17181c]">LeadHome</span>
+        </div>
+        <h1 className="text-2xl font-semibold tracking-tight text-[#17181c]">
+          {title}
+        </h1>
+        <p className="mt-2 text-sm text-[#687080]">{description}</p>
+        {children}
+      </main>
+    </div>
+  );
+}

@@ -8,32 +8,78 @@ datasource db {
 }
 
 model User {
-  id            String    @id @default(cuid())
-  name          String
-  email         String    @unique
-  emailVerified DateTime?
-  image         String?
-  passwordHash  String
-  leads         Lead[]
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id             String          @id @default(cuid())
+  name           String
+  email          String          @unique
+  emailVerified  DateTime?
+  image          String?
+  passwordHash   String
+  leads          Lead[]
+  inboundSources InboundSource[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+}
+
+model InboundSource {
+  id          String              @id @default(cuid())
+  userId      String
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  tokenHash   String              @unique
+  isActive    Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  rateLimits  InboundRateLimit[]
+  submissions InboundSubmission[]
+
+  @@index([userId, createdAt])
+}
+
+model InboundRateLimit {
+  id          String        @id @default(cuid())
+  sourceId    String
+  source      InboundSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  ipHash      String
+  windowStart DateTime
+  count       Int           @default(1)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@unique([sourceId, ipHash, windowStart])
+  @@index([windowStart])
+}
+
+model InboundSubmission {
+  id              String        @id @default(cuid())
+  sourceId        String
+  source          InboundSource @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  idempotencyHash String
+  leadId          String
+  lead            Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  expiresAt       DateTime
+  createdAt       DateTime      @default(now())
+
+  @@unique([sourceId, idempotencyHash])
+  @@index([expiresAt])
+  @@index([leadId])
 }
 
 model Lead {
-  id               String     @id @default(cuid())
-  userId           String
-  user             User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name             String
-  email            String?
-  phone            String?
-  company          String?
-  source           LeadSource @default(MANUAL)
-  status           LeadStatus @default(NEW)
-  message          String?
-  estimatedValue   Decimal?   @db.Decimal(12, 2)
-  nextFollowUpDate DateTime?
-  createdAt        DateTime   @default(now())
-  updatedAt        DateTime   @updatedAt
+  id                 String              @id @default(cuid())
+  userId             String
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  inboundSubmissions InboundSubmission[]
+  name               String
+  email              String?
+  phone              String?
+  company            String?
+  source             LeadSource          @default(MANUAL)
+  status             LeadStatus          @default(NEW)
+  message            String?
+  estimatedValue     Decimal?            @db.Decimal(12, 2)
+  nextFollowUpDate   DateTime?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
 
   @@index([userId, createdAt])
   @@index([userId, status])
