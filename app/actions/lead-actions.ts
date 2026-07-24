@@ -82,32 +82,40 @@ export async function updateLeadAction(
   }
 
   try {
-    const found = await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const previous = await tx.lead.findFirst({
         where: { id, userId: user.id },
       });
-      if (!previous) return false;
+      if (!previous) return "not-found" as const;
 
       const activities = buildLeadUpdateActivities(previous, parsed.data);
+      if (!activities.length) return "unchanged" as const;
+
       await tx.lead.update({ where: { id }, data: parsed.data });
-      if (activities.length) {
-        await tx.leadActivity.createMany({
-          data: activities.map((activity) => ({
-            ...activity,
-            leadId: id,
-            userId: user.id,
-          })),
-        });
-      }
-      return true;
+      await tx.leadActivity.createMany({
+        data: activities.map((activity) => ({
+          ...activity,
+          leadId: id,
+          userId: user.id,
+        })),
+      });
+      return "changed" as const;
     });
-    if (!found) return { message: "Lead not found." };
+    if (result === "not-found") return { message: "Lead not found." };
+    if (result === "unchanged") {
+      revalidateLead(id);
+      return {
+        success: true,
+        changed: false,
+        message: "No changes to save.",
+      };
+    }
   } catch {
     return { message: "We couldn't update this lead. Please try again." };
   }
 
   revalidateLead(id);
-  return { success: true, message: "Lead updated." };
+  return { success: true, changed: true, message: "Lead updated." };
 }
 
 export async function changeLeadStatusAction(id: string, formData: FormData) {

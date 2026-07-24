@@ -11,4 +11,9 @@ export const leadSchema = z.object({
   nextFollowUpDate: z.string().optional().transform((value) => value ? new Date(`${value}T12:00:00`) : null),
 });
 export const leadIdSchema = z.cuid();
-export type ActionState = { success?: boolean; message?: string; errors?: Record<string, string[]> };
+export type ActionState = {
+  success?: boolean;
+  changed?: boolean;
+  message?: string;
+  errors?: Record<string, string[]>;
+};

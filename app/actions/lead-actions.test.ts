@@ -111,7 +111,11 @@ describe("lead action activity transactions", () => {
       leadId,
       {},
       form({ status: "CONTACTED" }),
-    )).resolves.toEqual({ success: true, message: "Lead updated." });
+    )).resolves.toEqual({
+      success: true,
+      changed: true,
+      message: "Lead updated.",
+    });
 
     expect(mocks.findLead).toHaveBeenCalledWith({
       where: { id: leadId, userId: "user-a" },
@@ -126,9 +130,13 @@ describe("lead action activity transactions", () => {
     });
   });
 
-  it("does not create activity for an unchanged save", async () => {
-    await updateLeadAction(leadId, {}, form());
-    expect(mocks.updateLead).toHaveBeenCalled();
+  it("returns an accurate success without writing an unchanged save", async () => {
+    await expect(updateLeadAction(leadId, {}, form())).resolves.toEqual({
+      success: true,
+      changed: false,
+      message: "No changes to save.",
+    });
+    expect(mocks.updateLead).not.toHaveBeenCalled();
     expect(mocks.createActivities).not.toHaveBeenCalled();
   });
 

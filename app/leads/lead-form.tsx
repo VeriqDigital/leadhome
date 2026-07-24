@@ -97,7 +97,13 @@ export function LeadForm({
       </label>
       {state.message && (
         <p
-          className={`rounded-lg px-3 py-2.5 text-sm ${state.success ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}
+          className={`rounded-lg px-3 py-2.5 text-sm ${
+            !state.success
+              ? "bg-red-50 text-red-700"
+              : state.changed === false
+                ? "bg-[#f1f2f4] text-[#5e6674] dark:bg-[#292b31] dark:text-[#b7bbc5]"
+                : "bg-green-50 text-green-700"
+          }`}
           role="status"
         >
           {state.message}
