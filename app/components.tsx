@@ -103,6 +103,7 @@ export function LeadRow({
   lead,
 }: {
   lead: {
+    id: string;
     initials: string;
     name: string;
     source: string;
@@ -112,21 +113,26 @@ export function LeadRow({
   };
 }) {
   return (
-    <li className="grid min-h-18 grid-cols-[42px_minmax(120px,1.15fr)_70px_100px_minmax(150px,1.35fr)] items-center gap-3 border-b border-black/5.5 px-6 last:border-b-0 max-sm:grid-cols-[42px_1fr_auto] max-sm:py-3">
-      <span className="grid size-10 place-items-center rounded-full bg-[#f2f3f5] text-xs font-medium text-[#5e6674]">
-        {lead.initials}
-      </span>
-      <div className="min-w-0">
-        <p className="truncate text-[13px] font-semibold">{lead.name}</p>
-        <p className="mt-0.5 truncate text-xs text-[#687080]">{lead.source}</p>
-      </div>
-      <span className="text-xs text-[#687080] max-sm:hidden">{lead.time}</span>
-      <div className="max-sm:justify-self-end">
-        <StatusBadge status={lead.status} />
-      </div>
-      <p className="truncate text-xs text-[#687080] max-sm:col-span-2 max-sm:col-start-2">
-        {lead.message}
-      </p>
+    <li className="border-b border-black/5.5 last:border-b-0">
+      <Link
+        href={`/leads/${lead.id}`}
+        className="grid min-h-18 grid-cols-[42px_minmax(120px,1.15fr)_70px_100px_minmax(150px,1.35fr)] items-center gap-3 px-6 transition-colors hover:bg-black/[0.025] focus-visible:bg-black/[0.025] max-sm:grid-cols-[42px_1fr_auto] max-sm:py-3 dark:hover:bg-white/[0.035] dark:focus-visible:bg-white/[0.035]"
+      >
+        <span className="grid size-10 place-items-center rounded-full bg-[#f2f3f5] text-xs font-medium text-[#5e6674]">
+          {lead.initials}
+        </span>
+        <div className="min-w-0">
+          <p className="truncate text-[13px] font-semibold">{lead.name}</p>
+          <p className="mt-0.5 truncate text-xs text-[#687080]">{lead.source}</p>
+        </div>
+        <span className="text-xs text-[#687080] max-sm:hidden">{lead.time}</span>
+        <div className="max-sm:justify-self-end">
+          <StatusBadge status={lead.status} />
+        </div>
+        <p className="truncate text-xs text-[#687080] max-sm:col-span-2 max-sm:col-start-2">
+          {lead.message}
+        </p>
+      </Link>
     </li>
   );
 }

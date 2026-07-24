@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     const candidateHash = hashSecret(token);
     const source = await prisma.inboundSource.findUnique({
       where: { tokenHash: candidateHash },
-      select: { id: true, userId: true, tokenHash: true, isActive: true },
+      select: { id: true, userId: true, name: true, tokenHash: true, isActive: true },
     });
     if (!source?.isActive || !hashesMatch(candidateHash, source.tokenHash)) {
       return unauthorized();
@@ -91,8 +91,8 @@ export async function POST(request: Request) {
       }
     }
 
-    const createLead = (tx: Prisma.TransactionClient) =>
-      tx.lead.create({
+    const createLead = async (tx: Prisma.TransactionClient) => {
+      const created = await tx.lead.create({
         data: {
           ...payload.data,
           userId: source.userId,
@@ -101,6 +101,25 @@ export async function POST(request: Request) {
         },
         select: { id: true },
       });
+      await tx.leadActivity.create({
+        data: {
+          leadId: created.id,
+          userId: source.userId,
+          type: "WEBSITE_SUBMISSION_RECEIVED",
+          title: "Website submission received",
+          description: `Received from ${source.name}`,
+          metadata: {
+            inboundSourceId: source.id,
+            inboundSourceName: source.name,
+            estimatedValue: payload.data.estimatedValue ?? null,
+            company: payload.data.company ?? null,
+            email: payload.data.email ?? null,
+            phone: payload.data.phone ?? null,
+          },
+        },
+      });
+      return created;
+    };
 
     let lead: { id: string };
     if (idempotencyHash) {
@@ -129,15 +148,7 @@ export async function POST(request: Request) {
         throw error;
       }
     } else {
-      lead = await prisma.lead.create({
-        data: {
-          ...payload.data,
-          userId: source.userId,
-          source: "WEBSITE",
-          status: "NEW",
-        },
-        select: { id: true },
-      });
+      lead = await prisma.$transaction(createLead);
     }
 
     return json({ success: true, id: lead.id, deduplicated: false }, 201);

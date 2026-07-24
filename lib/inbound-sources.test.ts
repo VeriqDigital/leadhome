@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   updateMany: vi.fn(),
   findFirst: vi.fn(),
   createLead: vi.fn(),
+  createActivity: vi.fn(),
+  transaction: vi.fn(),
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({
@@ -12,7 +14,7 @@ vi.mock("@/lib/prisma", () => ({
       updateMany: mocks.updateMany,
       findFirst: mocks.findFirst,
     },
-    lead: { create: mocks.createLead },
+    $transaction: mocks.transaction,
   },
 }));
 
@@ -29,6 +31,13 @@ describe("inbound source ownership", () => {
     });
     mocks.findFirst.mockResolvedValue(null);
     mocks.createLead.mockResolvedValue({ id: "lead-test" });
+    mocks.createActivity.mockResolvedValue({ id: "activity-test" });
+    mocks.transaction.mockImplementation((operation) =>
+      operation({
+        lead: { create: mocks.createLead },
+        leadActivity: { create: mocks.createActivity },
+      }),
+    );
   });
 
   it("does not let one account manage another account's source", async () => {
@@ -41,14 +50,14 @@ describe("inbound source ownership", () => {
   });
 
   it("creates a forced test lead only for an active owned source", async () => {
-    mocks.findFirst.mockResolvedValue({ id: "source-a" });
+    mocks.findFirst.mockResolvedValue({ id: "source-a", name: "Veriq" });
 
     await expect(
       createInboundTestLead("user-a", "source-a"),
     ).resolves.toEqual({ id: "lead-test" });
     expect(mocks.findFirst).toHaveBeenCalledWith({
       where: { id: "source-a", userId: "user-a", isActive: true },
-      select: { id: true },
+      select: { id: true, name: true },
     });
     expect(mocks.createLead).toHaveBeenCalledWith({
       data: {
@@ -60,6 +69,20 @@ describe("inbound source ownership", () => {
         status: "NEW",
       },
       select: { id: true },
+    });
+    expect(mocks.createActivity).toHaveBeenCalledWith({
+      data: {
+        leadId: "lead-test",
+        userId: "user-a",
+        type: "WEBSITE_SUBMISSION_RECEIVED",
+        title: "Website submission received",
+        description: "Received from Veriq",
+        metadata: {
+          inboundSourceId: "source-a",
+          inboundSourceName: "Veriq",
+          email: "test@leadhome.local",
+        },
+      },
     });
   });
 

@@ -34,19 +34,36 @@ export function deleteInboundSource(userId: string, sourceId: string) {
 export async function createInboundTestLead(userId: string, sourceId: string) {
   const source = await prisma.inboundSource.findFirst({
     where: { id: sourceId, userId, isActive: true },
-    select: { id: true },
+    select: { id: true, name: true },
   });
   if (!source) return null;
 
-  return prisma.lead.create({
-    data: {
-      userId,
-      name: "LeadHome Test Lead",
-      email: "test@leadhome.local",
-      message: "Test submission from Website Sources settings",
-      source: "WEBSITE",
-      status: "NEW",
-    },
-    select: { id: true },
+  return prisma.$transaction(async (tx) => {
+    const lead = await tx.lead.create({
+      data: {
+        userId,
+        name: "LeadHome Test Lead",
+        email: "test@leadhome.local",
+        message: "Test submission from Website Sources settings",
+        source: "WEBSITE",
+        status: "NEW",
+      },
+      select: { id: true },
+    });
+    await tx.leadActivity.create({
+      data: {
+        leadId: lead.id,
+        userId,
+        type: "WEBSITE_SUBMISSION_RECEIVED",
+        title: "Website submission received",
+        description: `Received from ${source.name}`,
+        metadata: {
+          inboundSourceId: source.id,
+          inboundSourceName: source.name,
+          email: "test@leadhome.local",
+        },
+      },
+    });
+    return lead;
   });
 }

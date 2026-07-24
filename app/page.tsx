@@ -10,6 +10,7 @@ import {
 import { LeadStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-user";
+import { sourceLabels, statusLabels } from "@/lib/lead-format";
 import {
   DashboardCard,
   Header,
@@ -23,22 +24,6 @@ import {
 } from "./components";
 import { reminders, tasks } from "./data";
 
-const statusLabel: Record<LeadStatus, string> = {
-  NEW: "New",
-  CONTACTED: "Contacted",
-  FOLLOW_UP: "Follow-up",
-  PROPOSAL_SENT: "Proposal Sent",
-  NEGOTIATING: "Negotiating",
-  WON: "Won",
-  LOST: "Lost",
-};
-const sourceLabel: Record<string, string> = {
-  MANUAL: "Manual",
-  WEBSITE: "Website Form",
-  GMAIL: "Gmail",
-  FACEBOOK: "Facebook",
-  PHONE: "Phone Call",
-};
 const colors: Record<LeadStatus, string> = {
   NEW: "#8c83d9",
   CONTACTED: "#e7bb5f",
@@ -152,6 +137,7 @@ export default async function Home() {
                     <LeadRow
                       key={lead.id}
                       lead={{
+                        id: lead.id,
                         initials: lead.name
                           .split(" ")
                           .map((part) => part[0])
@@ -159,9 +145,9 @@ export default async function Home() {
                           .slice(0, 2)
                           .toUpperCase(),
                         name: lead.name,
-                        source: sourceLabel[lead.source],
+                        source: sourceLabels[lead.source],
                         time: timeAgo(lead.createdAt),
-                        status: statusLabel[lead.status],
+                        status: statusLabels[lead.status],
                         message:
                           lead.message || lead.company || "No notes added.",
                       }}
@@ -207,7 +193,7 @@ export default async function Home() {
               {Object.values(LeadStatus).map((status) => (
                 <PipelineRow
                   key={status}
-                  stage={statusLabel[status]}
+                  stage={statusLabels[status]}
                   count={counts[status] ?? 0}
                   width={`${((counts[status] ?? 0) / maximum) * 100}%`}
                   color={colors[status]}

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   upsertRate: vi.fn(),
   deleteRates: vi.fn(),
   createLead: vi.fn(),
+  createActivity: vi.fn(),
   createSubmission: vi.fn(),
   findSubmission: vi.fn(),
   transaction: vi.fn(),
@@ -29,12 +30,14 @@ const token2 = "b".repeat(43);
 const sources = [
   {
     id: "source-1",
+    name: "Veriq",
     userId: "owner-1",
     tokenHash: hashSecret(token1),
     isActive: true,
   },
   {
     id: "source-2",
+    name: "Second site",
     userId: "owner-2",
     tokenHash: hashSecret(token2),
     isActive: true,
@@ -43,6 +46,7 @@ const sources = [
 
 const submissions = new Map<string, string>();
 const committedLeadIds: string[] = [];
+const committedActivities: object[] = [];
 let leadSequence = 0;
 
 function request(
@@ -70,6 +74,7 @@ function submissionKey(sourceId: string, idempotencyHash: string) {
 beforeEach(() => {
   submissions.clear();
   committedLeadIds.length = 0;
+  committedActivities.length = 0;
   leadSequence = 0;
   mocks.findSource.mockImplementation(({ where: { tokenHash } }) =>
     Promise.resolve(sources.find((source) => source.tokenHash === tokenHash) ?? null),
@@ -101,17 +106,25 @@ beforeEach(() => {
   });
   mocks.transaction.mockImplementation(async (operation) => {
     const pendingLeadIds: string[] = [];
+    const pendingActivities: object[] = [];
     const result = await operation({
       lead: {
-        create: vi.fn(async () => {
+        create: mocks.createLead.mockImplementationOnce(async () => {
           const lead = { id: `lead-${++leadSequence}` };
           pendingLeadIds.push(lead.id);
           return lead;
         }),
       },
+      leadActivity: {
+        create: mocks.createActivity.mockImplementationOnce(async ({ data }) => {
+          pendingActivities.push(data);
+          return { id: `activity-${data.leadId}` };
+        }),
+      },
       inboundSubmission: { create: mocks.createSubmission },
     });
     committedLeadIds.push(...pendingLeadIds);
+    committedActivities.push(...pendingActivities);
     return result;
   });
 });
@@ -130,6 +143,13 @@ describe("POST /api/inbound/forms", () => {
     });
     expect(committedLeadIds).toEqual(["lead-1"]);
     expect(submissions).toHaveLength(1);
+    expect(committedActivities).toEqual([
+      expect.objectContaining({
+        type: "WEBSITE_SUBMISSION_RECEIVED",
+        description: "Received from Veriq",
+        userId: "owner-1",
+      }),
+    ]);
   });
 
   it("deduplicates a repeated key from the same source", async () => {
@@ -144,6 +164,7 @@ describe("POST /api/inbound/forms", () => {
       deduplicated: true,
     });
     expect(committedLeadIds).toHaveLength(1);
+    expect(committedActivities).toHaveLength(1);
   });
 
   it("allows the same key for a different authenticated source", async () => {
@@ -188,13 +209,21 @@ describe("POST /api/inbound/forms", () => {
     });
     expect(committedLeadIds).toHaveLength(1);
     expect(submissions).toHaveLength(1);
+    expect(committedActivities).toHaveLength(1);
   });
 
   it("preserves token authentication and source ownership", async () => {
     const unauthorized = await POST(request({ name: "Jane" }, { token: "c".repeat(43) }));
     expect(unauthorized.status).toBe(401);
 
-    await POST(request({ name: "Jane", userId: "attacker", sourceId: "source-2" }));
+    await POST(request({
+      name: "Jane",
+      userId: "attacker",
+      sourceId: "source-2",
+      leadId: "other-lead",
+      activityType: "STATUS_CHANGED",
+      activityTitle: "Injected",
+    }));
     expect(mocks.createLead).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         userId: "owner-1",
@@ -202,6 +231,13 @@ describe("POST /api/inbound/forms", () => {
         status: "NEW",
       }),
     }));
+    expect(committedActivities).toEqual([
+      expect.objectContaining({
+        userId: "owner-1",
+        type: "WEBSITE_SUBMISSION_RECEIVED",
+        title: "Website submission received",
+      }),
+    ]);
   });
 
   it("rejects missing tokens, disabled sources, and invalid payloads", async () => {

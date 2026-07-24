@@ -15,6 +15,7 @@ model User {
   image          String?
   passwordHash   String
   leads          Lead[]
+  leadActivities LeadActivity[]
   inboundSources InboundSource[]
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
@@ -67,6 +68,7 @@ model Lead {
   userId             String
   user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   inboundSubmissions InboundSubmission[]
+  activities         LeadActivity[]
   name               String
   email              String?
   phone              String?
@@ -81,6 +83,22 @@ model Lead {
 
   @@index([userId, createdAt])
   @@index([userId, status])
+}
+
+model LeadActivity {
+  id          String           @id @default(cuid())
+  leadId      String
+  userId      String
+  type        LeadActivityType
+  title       String
+  description String?
+  metadata    Json?
+  createdAt   DateTime         @default(now())
+  lead        Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([leadId, createdAt])
+  @@index([userId, createdAt])
 }
 
 enum LeadSource {
@@ -99,4 +117,16 @@ enum LeadStatus {
   NEGOTIATING
   WON
   LOST
+}
+
+enum LeadActivityType {
+  LEAD_CREATED
+  WEBSITE_SUBMISSION_RECEIVED
+  STATUS_CHANGED
+  ESTIMATED_VALUE_CHANGED
+  FOLLOW_UP_CHANGED
+  CONTACT_INFO_CHANGED
+  COMPANY_CHANGED
+  NOTES_CHANGED
+  SOURCE_CHANGED
 }
