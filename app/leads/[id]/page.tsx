@@ -32,7 +32,7 @@ export default async function LeadDetailPage({
         <ChevronLeft className="size-4" />
         Back to leads
       </Link>
-      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1.7fr)_minmax(300px,0.9fr)]">
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(320px,380px)]">
         <section className="dashboard-card rounded-2xl border border-black/5.5 bg-white p-6 shadow-[0_8px_30px_rgba(23,24,28,0.035)] sm:p-8">
           <div className="mb-8 flex items-start justify-between gap-4">
             <div>
@@ -51,7 +51,7 @@ export default async function LeadDetailPage({
             lead={{
               ...lead,
               estimatedValue: lead.estimatedValue?.toString() ?? null,
-              nextFollowUpDate:
+              nextFollowUp:
                 lead.nextFollowUpDate?.toISOString().slice(0, 10) ?? null,
             }}
           />

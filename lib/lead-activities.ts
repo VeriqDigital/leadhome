@@ -126,6 +126,7 @@ export async function getLeadActivitiesForUser({
       type: true,
       title: true,
       description: true,
+      metadata: true,
       createdAt: true,
     },
   });

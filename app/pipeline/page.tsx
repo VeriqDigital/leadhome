@@ -2,6 +2,7 @@ import { LeadStatus } from "@prisma/client";
 import { SlidersHorizontal } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-user";
+import { statusLabels } from "@/lib/lead-format";
 import { PipelineRow } from "../components";
 import { SectionPage } from "../section-page";
 
@@ -14,8 +15,6 @@ const colors = [
   "#66ad76",
   "#9ca3af",
 ];
-const label = (value: string) =>
-  value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 export default async function PipelinePage() {
   const user = await requireUser();
   const rows = await prisma.lead.groupBy({
@@ -43,7 +42,7 @@ export default async function PipelinePage() {
             >
               <div className="mb-5 flex items-start justify-between">
                 <div>
-                  <h3 className="text-sm font-semibold">{label(status)}</h3>
+                  <h3 className="text-sm font-semibold">{statusLabels[status]}</h3>
                   <p className="mt-1 text-xs text-[#687080]">
                     Active opportunities
                   </p>
@@ -53,7 +52,7 @@ export default async function PipelinePage() {
                 </span>
               </div>
               <PipelineRow
-                stage={label(status)}
+                stage={statusLabels[status]}
                 count={count}
                 width={`${(count / maximum) * 100}%`}
                 color={colors[index]}

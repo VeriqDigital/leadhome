@@ -3,12 +3,11 @@ import { LeadStatus } from "@prisma/client";
 import { Plus, Search, UsersRound } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-user";
+import { formatCurrency, sourceLabels, statusLabels } from "@/lib/lead-format";
 import { PageHeader } from "../page-header";
 import { StatusBadge } from "../components";
 
 const statuses = Object.values(LeadStatus);
-const display = (value: string) =>
-  value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 export default async function LeadsPage({
   searchParams,
 }: {
@@ -69,7 +68,7 @@ export default async function LeadsPage({
             <option value="">All statuses</option>
             {statuses.map((item) => (
               <option key={item} value={item}>
-                {display(item)}
+                {statusLabels[item]}
               </option>
             ))}
           </select>
@@ -107,14 +106,14 @@ export default async function LeadsPage({
                       </p>
                     </td>
                     <td className="py-4 text-sm text-[#687080]">
-                      {display(lead.source)}
+                      {sourceLabels[lead.source]}
                     </td>
                     <td className="py-4">
-                      <StatusBadge status={display(lead.status)} />
+                      <StatusBadge status={statusLabels[lead.status]} />
                     </td>
                     <td className="py-4 text-sm">
                       {lead.estimatedValue
-                        ? `$${Number(lead.estimatedValue).toLocaleString()}`
+                        ? formatCurrency(lead.estimatedValue.toString())
                         : "—"}
                     </td>
                     <td className="py-4 text-sm text-[#687080]">

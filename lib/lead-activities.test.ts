@@ -124,6 +124,7 @@ describe("activity data access", () => {
         type: true,
         title: true,
         description: true,
+        metadata: true,
         createdAt: true,
       },
     });

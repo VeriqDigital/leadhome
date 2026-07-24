@@ -45,7 +45,7 @@ function form(overrides: Record<string, string> = {}) {
     status: "NEW",
     message: "Notes",
     estimatedValue: "3500",
-    nextFollowUpDate: "",
+    nextFollowUp: "",
     ...overrides,
   };
   Object.entries(values).forEach(([key, value]) => data.set(key, value));
@@ -64,15 +64,35 @@ const existing = {
   message: "Notes",
   estimatedValue: 3500,
   nextFollowUpDate: null,
-  createdAt: new Date(),
-  updatedAt: new Date(),
+  createdAt: new Date("2026-07-20T12:00:00.000Z"),
+  updatedAt: new Date("2026-07-24T12:00:00.000Z"),
+};
+
+const canonical = {
+  id: leadId,
+  name: "Jane Doe",
+  company: "Acme",
+  email: "jane@example.com",
+  phone: "555-0100",
+  source: "MANUAL",
+  status: "NEW",
+  estimatedValue: "3500",
+  nextFollowUp: null,
+  message: "Notes",
+  updatedAt: "2026-07-24T12:00:00.000Z",
 };
 
 beforeEach(() => {
   mocks.createLead.mockResolvedValue({ id: leadId });
   mocks.createActivity.mockResolvedValue({ id: "activity-a" });
   mocks.findLead.mockResolvedValue(existing);
-  mocks.updateLead.mockResolvedValue(existing);
+  mocks.updateLead.mockImplementation(({ data }) =>
+    Promise.resolve({
+      ...existing,
+      ...data,
+      updatedAt: new Date("2026-07-24T12:05:00.000Z"),
+    }),
+  );
   mocks.createActivities.mockResolvedValue({ count: 1 });
   mocks.deleteLeads.mockResolvedValue({ count: 1 });
   mocks.transaction.mockImplementation((operation) =>
@@ -115,12 +135,24 @@ describe("lead action activity transactions", () => {
       success: true,
       changed: true,
       message: "Lead updated.",
+      lead: {
+        ...canonical,
+        status: "CONTACTED",
+        updatedAt: "2026-07-24T12:05:00.000Z",
+      },
     });
 
     expect(mocks.findLead).toHaveBeenCalledWith({
       where: { id: leadId, userId: "user-a" },
     });
     expect(mocks.updateLead).toHaveBeenCalled();
+    expect(mocks.updateLead).toHaveBeenCalledWith({
+      where: { id: leadId },
+      data: expect.objectContaining({
+        status: "CONTACTED",
+        nextFollowUpDate: null,
+      }),
+    });
     expect(mocks.createActivities).toHaveBeenCalledWith({
       data: [expect.objectContaining({
         leadId,
@@ -130,11 +162,106 @@ describe("lead action activity transactions", () => {
     });
   });
 
+  it("normalizes textarea line endings so a status save does not change notes", async () => {
+    mocks.findLead.mockResolvedValue({
+      ...existing,
+      message: "Line one\n\nLine two",
+    });
+    await updateLeadAction(
+      leadId,
+      {},
+      form({
+        status: "WON",
+        message: "Line one\r\n\r\nLine two",
+      }),
+    );
+
+    expect(mocks.updateLead).toHaveBeenCalledWith({
+      where: { id: leadId },
+      data: expect.objectContaining({
+        status: "WON",
+        message: "Line one\n\nLine two",
+      }),
+    });
+    expect(mocks.createActivities).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ type: "STATUS_CHANGED" })],
+    });
+  });
+
+  it("does not reverse a saved status on the next no-op save", async () => {
+    await updateLeadAction(leadId, {}, form({ status: "CONTACTED" }));
+    mocks.findLead.mockResolvedValue({
+      ...existing,
+      status: "CONTACTED",
+      updatedAt: new Date("2026-07-24T12:05:00.000Z"),
+    });
+
+    await expect(
+      updateLeadAction(leadId, {}, form({ status: "CONTACTED" })),
+    ).resolves.toEqual(expect.objectContaining({
+      success: true,
+      changed: false,
+      message: "No changes to save.",
+      lead: expect.objectContaining({ status: "CONTACTED" }),
+    }));
+    expect(mocks.updateLead).toHaveBeenCalledTimes(1);
+    expect(mocks.createActivities).toHaveBeenCalledTimes(1);
+  });
+
+  it("changes follow-up without changing status", async () => {
+    await expect(updateLeadAction(
+      leadId,
+      {},
+      form({ nextFollowUp: "2026-08-12" }),
+    )).resolves.toEqual(expect.objectContaining({
+      success: true,
+      changed: true,
+      lead: expect.objectContaining({
+        status: "NEW",
+        nextFollowUp: "2026-08-12",
+      }),
+    }));
+    expect(mocks.updateLead).toHaveBeenCalledWith({
+      where: { id: leadId },
+      data: expect.objectContaining({
+        status: "NEW",
+        nextFollowUpDate: new Date("2026-08-12T12:00:00"),
+      }),
+    });
+    expect(mocks.createActivities).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ type: "FOLLOW_UP_CHANGED" })],
+    });
+  });
+
+  it("clears follow-up without altering the persisted status", async () => {
+    mocks.findLead.mockResolvedValue({
+      ...existing,
+      status: "CONTACTED",
+      nextFollowUpDate: new Date("2026-08-12T12:00:00"),
+    });
+    await updateLeadAction(
+      leadId,
+      {},
+      form({ status: "CONTACTED", nextFollowUp: "" }),
+    );
+    expect(mocks.updateLead).toHaveBeenCalledWith({
+      where: { id: leadId },
+      data: expect.objectContaining({
+        status: "CONTACTED",
+        nextFollowUpDate: null,
+      }),
+    });
+    expect(mocks.createActivities).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ type: "FOLLOW_UP_CHANGED" })],
+    });
+  });
+
   it("returns an accurate success without writing an unchanged save", async () => {
     await expect(updateLeadAction(leadId, {}, form())).resolves.toEqual({
       success: true,
       changed: false,
       message: "No changes to save.",
+      lead: canonical,
     });
     expect(mocks.updateLead).not.toHaveBeenCalled();
     expect(mocks.createActivities).not.toHaveBeenCalled();

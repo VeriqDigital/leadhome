@@ -11,9 +11,23 @@ export const leadSchema = z.object({
   nextFollowUpDate: z.string().optional().transform((value) => value ? new Date(`${value}T12:00:00`) : null),
 });
 export const leadIdSchema = z.cuid();
+export type CanonicalLead = {
+  id: string;
+  name: string;
+  company: string | null;
+  email: string | null;
+  phone: string | null;
+  source: LeadSource;
+  status: LeadStatus;
+  estimatedValue: string | null;
+  nextFollowUp: string | null;
+  message: string | null;
+  updatedAt: string;
+};
 export type ActionState = {
   success?: boolean;
   changed?: boolean;
   message?: string;
   errors?: Record<string, string[]>;
+  lead?: CanonicalLead;
 };

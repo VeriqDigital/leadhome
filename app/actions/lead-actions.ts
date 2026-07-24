@@ -5,9 +5,15 @@ import { redirect } from "next/navigation";
 import { buildLeadUpdateActivities } from "@/lib/lead-activities";
 import { requireUser } from "@/lib/auth-user";
 import { prisma } from "@/lib/prisma";
-import { leadIdSchema, leadSchema, type ActionState } from "@/lib/validation";
+import {
+  leadIdSchema,
+  leadSchema,
+  type ActionState,
+  type CanonicalLead,
+} from "@/lib/validation";
 
 function values(formData: FormData) {
+  const message = formData.get("message");
   return {
     name: formData.get("name"),
     email: formData.get("email"),
@@ -15,9 +21,38 @@ function values(formData: FormData) {
     company: formData.get("company"),
     source: formData.get("source"),
     status: formData.get("status"),
-    message: formData.get("message"),
+    message:
+      typeof message === "string" ? message.replace(/\r\n?/g, "\n") : message,
     estimatedValue: formData.get("estimatedValue"),
-    nextFollowUpDate: formData.get("nextFollowUpDate"),
+    nextFollowUpDate: formData.get("nextFollowUp"),
+  };
+}
+
+function canonicalLead(lead: {
+  id: string;
+  name: string;
+  company: string | null;
+  email: string | null;
+  phone: string | null;
+  source: CanonicalLead["source"];
+  status: CanonicalLead["status"];
+  estimatedValue: { toString(): string } | number | null;
+  nextFollowUpDate: Date | null;
+  message: string | null;
+  updatedAt: Date;
+}): CanonicalLead {
+  return {
+    id: lead.id,
+    name: lead.name,
+    company: lead.company,
+    email: lead.email,
+    phone: lead.phone,
+    source: lead.source,
+    status: lead.status,
+    estimatedValue: lead.estimatedValue?.toString() ?? null,
+    nextFollowUp: lead.nextFollowUpDate?.toISOString().slice(0, 10) ?? null,
+    message: lead.message,
+    updatedAt: lead.updatedAt.toISOString(),
   };
 }
 
@@ -86,12 +121,17 @@ export async function updateLeadAction(
       const previous = await tx.lead.findFirst({
         where: { id, userId: user.id },
       });
-      if (!previous) return "not-found" as const;
+      if (!previous) return { kind: "not-found" as const };
 
       const activities = buildLeadUpdateActivities(previous, parsed.data);
-      if (!activities.length) return "unchanged" as const;
+      if (!activities.length) {
+        return {
+          kind: "unchanged" as const,
+          lead: canonicalLead(previous),
+        };
+      }
 
-      await tx.lead.update({ where: { id }, data: parsed.data });
+      const updated = await tx.lead.update({ where: { id }, data: parsed.data });
       await tx.leadActivity.createMany({
         data: activities.map((activity) => ({
           ...activity,
@@ -99,23 +139,31 @@ export async function updateLeadAction(
           userId: user.id,
         })),
       });
-      return "changed" as const;
+      return {
+        kind: "changed" as const,
+        lead: canonicalLead(updated),
+      };
     });
-    if (result === "not-found") return { message: "Lead not found." };
-    if (result === "unchanged") {
+    if (result.kind === "not-found") return { message: "Lead not found." };
+    if (result.kind === "unchanged") {
       revalidateLead(id);
       return {
         success: true,
         changed: false,
         message: "No changes to save.",
+        lead: result.lead,
       };
     }
+    revalidateLead(id);
+    return {
+      success: true,
+      changed: true,
+      message: "Lead updated.",
+      lead: result.lead,
+    };
   } catch {
     return { message: "We couldn't update this lead. Please try again." };
   }
-
-  revalidateLead(id);
-  return { success: true, changed: true, message: "Lead updated." };
 }
 
 export async function changeLeadStatusAction(id: string, formData: FormData) {
