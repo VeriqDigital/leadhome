@@ -56,11 +56,9 @@ model InboundSubmission {
   idempotencyHash String
   leadId          String
   lead            Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  expiresAt       DateTime
   createdAt       DateTime      @default(now())
 
   @@unique([sourceId, idempotencyHash])
-  @@index([expiresAt])
   @@index([leadId])
 }
 

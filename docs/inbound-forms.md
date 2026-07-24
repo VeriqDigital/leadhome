@@ -43,4 +43,4 @@ curl -X POST "https://your-leadhome.example/api/inbound/forms" \
   -d '{"name":"Jane Doe","email":"jane@example.com","phone":"+1 555 0100","company":"Acme","message":"Please call me","estimatedValue":2500}'
 ```
 
-`name` is required. `email` must be valid when present, and `estimatedValue` must be nonnegative. LeadHome ignores external `userId`, `source`, and `status` values and always creates a `WEBSITE` / `NEW` lead for the token owner. Idempotency keys must be 8–200 characters and suppress duplicates for five minutes.
+`name` is required. `email` must be valid when present, and `estimatedValue` must be nonnegative. LeadHome ignores external `userId`, `source`, and `status` values and always creates a `WEBSITE` / `NEW` lead for the token owner. Idempotency keys must be 8–200 characters and are retained for the life of the lead. Reusing a key for the same website source returns the original lead ID with `deduplicated: true`; keys are scoped per source.

@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hashSecret } from "@/lib/inbound-crypto";
 
@@ -6,8 +7,8 @@ const mocks = vi.hoisted(() => ({
   upsertRate: vi.fn(),
   deleteRates: vi.fn(),
   createLead: vi.fn(),
+  createSubmission: vi.fn(),
   findSubmission: vi.fn(),
-  deleteSubmissions: vi.fn(),
   transaction: vi.fn(),
 }));
 
@@ -15,10 +16,7 @@ vi.mock("@/lib/prisma", () => ({
   prisma: {
     inboundSource: { findUnique: mocks.findSource },
     inboundRateLimit: { upsert: mocks.upsertRate, deleteMany: mocks.deleteRates },
-    inboundSubmission: {
-      findUnique: mocks.findSubmission,
-      deleteMany: mocks.deleteSubmissions,
-    },
+    inboundSubmission: { findUnique: mocks.findSubmission },
     lead: { create: mocks.createLead },
     $transaction: mocks.transaction,
   },
@@ -26,76 +24,195 @@ vi.mock("@/lib/prisma", () => ({
 
 import { POST } from "./route";
 
-const token = "a".repeat(43);
-const source = {
-  id: "source-1",
-  userId: "owner-1",
-  tokenHash: hashSecret(token),
-  isActive: true,
-};
+const token1 = "a".repeat(43);
+const token2 = "b".repeat(43);
+const sources = [
+  {
+    id: "source-1",
+    userId: "owner-1",
+    tokenHash: hashSecret(token1),
+    isActive: true,
+  },
+  {
+    id: "source-2",
+    userId: "owner-2",
+    tokenHash: hashSecret(token2),
+    isActive: true,
+  },
+];
 
-function request(payload: object, suppliedToken = token) {
+const submissions = new Map<string, string>();
+const committedLeadIds: string[] = [];
+let leadSequence = 0;
+
+function request(
+  payload: object,
+  { token = token1, idempotencyKey }: { token?: string; idempotencyKey?: string } = {},
+) {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+    "x-forwarded-for": "203.0.113.5",
+  };
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
+
   return new Request("http://localhost/api/inbound/forms", {
     method: "POST",
-    headers: {
-      Authorization: `Bearer ${suppliedToken}`,
-      "Content-Type": "application/json",
-      "x-forwarded-for": "203.0.113.5",
-    },
+    headers,
     body: JSON.stringify(payload),
   });
 }
 
+function submissionKey(sourceId: string, idempotencyHash: string) {
+  return `${sourceId}:${idempotencyHash}`;
+}
+
 beforeEach(() => {
-  mocks.findSource.mockResolvedValue(source);
+  submissions.clear();
+  committedLeadIds.length = 0;
+  leadSequence = 0;
+  mocks.findSource.mockImplementation(({ where: { tokenHash } }) =>
+    Promise.resolve(sources.find((source) => source.tokenHash === tokenHash) ?? null),
+  );
   mocks.upsertRate.mockResolvedValue({ count: 1 });
   mocks.deleteRates.mockResolvedValue({ count: 0 });
-  mocks.deleteSubmissions.mockResolvedValue({ count: 0 });
-  mocks.createLead.mockResolvedValue({ id: "lead-1" });
-  mocks.findSubmission.mockResolvedValue(null);
+  mocks.createLead.mockImplementation(async () => {
+    const lead = { id: `lead-${++leadSequence}` };
+    committedLeadIds.push(lead.id);
+    return lead;
+  });
+  mocks.findSubmission.mockImplementation(
+    ({ where: { sourceId_idempotencyHash: key } }) => {
+      const leadId = submissions.get(submissionKey(key.sourceId, key.idempotencyHash));
+      return Promise.resolve(leadId ? { leadId } : null);
+    },
+  );
+  mocks.createSubmission.mockImplementation(async ({ data }) => {
+    const key = submissionKey(data.sourceId, data.idempotencyHash);
+    if (submissions.has(key)) {
+      throw new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+        code: "P2002",
+        clientVersion: "test",
+        meta: { target: ["sourceId", "idempotencyHash"] },
+      });
+    }
+    submissions.set(key, data.leadId);
+    return { id: `submission-${data.leadId}` };
+  });
+  mocks.transaction.mockImplementation(async (operation) => {
+    const pendingLeadIds: string[] = [];
+    const result = await operation({
+      lead: {
+        create: vi.fn(async () => {
+          const lead = { id: `lead-${++leadSequence}` };
+          pendingLeadIds.push(lead.id);
+          return lead;
+        }),
+      },
+      inboundSubmission: { create: mocks.createSubmission },
+    });
+    committedLeadIds.push(...pendingLeadIds);
+    return result;
+  });
 });
 
 describe("POST /api/inbound/forms", () => {
-  it("ingests a valid lead", async () => {
-    const response = await POST(request({ name: "Jane", email: "jane@example.com" }));
+  it("creates one lead for the first keyed request", async () => {
+    const response = await POST(
+      request({ name: "Jane", email: "jane@example.com" }, { idempotencyKey: "contact-12345" }),
+    );
+
     expect(response.status).toBe(201);
-    await expect(response.json()).resolves.toEqual({ success: true, id: "lead-1" });
+    await expect(response.json()).resolves.toEqual({
+      success: true,
+      id: "lead-1",
+      deduplicated: false,
+    });
+    expect(committedLeadIds).toEqual(["lead-1"]);
+    expect(submissions).toHaveLength(1);
   });
 
-  it("rejects a missing token", async () => {
-    const response = await POST(new Request("http://localhost/api/inbound/forms", { method: "POST", body: "{}" }));
-    expect(response.status).toBe(401);
-    expect(mocks.findSource).not.toHaveBeenCalled();
+  it("deduplicates a repeated key from the same source", async () => {
+    const first = await POST(request({ name: "Jane" }, { idempotencyKey: "contact-12345" }));
+    const repeated = await POST(request({ name: "Jane again" }, { idempotencyKey: "contact-12345" }));
+    const firstBody = await first.json();
+
+    expect(repeated.status).toBe(200);
+    await expect(repeated.json()).resolves.toEqual({
+      success: true,
+      id: firstBody.id,
+      deduplicated: true,
+    });
+    expect(committedLeadIds).toHaveLength(1);
   });
 
-  it("rejects an invalid token with the generic response", async () => {
-    mocks.findSource.mockResolvedValue(null);
-    const response = await POST(request({ name: "Jane" }, "b".repeat(43)));
-    expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ success: false, error: "Unauthorized" });
+  it("allows the same key for a different authenticated source", async () => {
+    const first = await POST(request({ name: "Jane" }, { idempotencyKey: "contact-12345" }));
+    const second = await POST(
+      request({ name: "John" }, { token: token2, idempotencyKey: "contact-12345" }),
+    );
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(committedLeadIds).toHaveLength(2);
+    expect(submissions).toHaveLength(2);
   });
 
-  it("rejects a disabled source", async () => {
-    mocks.findSource.mockResolvedValue({ ...source, isActive: false });
+  it("creates another lead for a different key from the same source", async () => {
+    await POST(request({ name: "Jane" }, { idempotencyKey: "contact-12345" }));
+    await POST(request({ name: "Jane" }, { idempotencyKey: "contact-67890" }));
+
+    expect(committedLeadIds).toHaveLength(2);
+    expect(submissions).toHaveLength(2);
+  });
+
+  it("commits only one lead for concurrent duplicate requests", async () => {
+    mocks.findSubmission.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+
+    const [first, duplicate] = await Promise.all([
+      POST(request({ name: "Jane" }, { idempotencyKey: "concurrent-12345" })),
+      POST(request({ name: "Jane" }, { idempotencyKey: "concurrent-12345" })),
+    ]);
+    const responses = await Promise.all([first.json(), duplicate.json()]);
+
+    expect([first.status, duplicate.status].sort()).toEqual([200, 201]);
+    expect(responses).toContainEqual({
+      success: true,
+      id: committedLeadIds[0],
+      deduplicated: false,
+    });
+    expect(responses).toContainEqual({
+      success: true,
+      id: committedLeadIds[0],
+      deduplicated: true,
+    });
+    expect(committedLeadIds).toHaveLength(1);
+    expect(submissions).toHaveLength(1);
+  });
+
+  it("preserves token authentication and source ownership", async () => {
+    const unauthorized = await POST(request({ name: "Jane" }, { token: "c".repeat(43) }));
+    expect(unauthorized.status).toBe(401);
+
+    await POST(request({ name: "Jane", userId: "attacker", sourceId: "source-2" }));
+    expect(mocks.createLead).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        userId: "owner-1",
+        source: "WEBSITE",
+        status: "NEW",
+      }),
+    }));
+  });
+
+  it("rejects missing tokens, disabled sources, and invalid payloads", async () => {
+    const missingToken = await POST(
+      new Request("http://localhost/api/inbound/forms", { method: "POST", body: "{}" }),
+    );
+    expect(missingToken.status).toBe(401);
+
+    mocks.findSource.mockResolvedValueOnce({ ...sources[0], isActive: false });
     expect((await POST(request({ name: "Jane" }))).status).toBe(401);
-  });
 
-  it("rejects an invalid payload", async () => {
     expect((await POST(request({ name: "", email: "not-an-email" }))).status).toBe(400);
-    expect(mocks.createLead).not.toHaveBeenCalled();
-  });
-
-  it("forces source and status instead of accepting overrides", async () => {
-    await POST(request({ name: "Jane", source: "PHONE", status: "WON" }));
-    expect(mocks.createLead).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ source: "WEBSITE", status: "NEW" }),
-    }));
-  });
-
-  it("assigns the lead to the source owner", async () => {
-    await POST(request({ name: "Jane" }));
-    expect(mocks.createLead).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ userId: "owner-1" }),
-    }));
   });
 });

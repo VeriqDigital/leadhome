@@ -1,10 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import {
-  INBOUND_IDEMPOTENCY_TTL_SECONDS,
-  INBOUND_RATE_WINDOW_SECONDS,
-  inboundRateLimit,
-} from "@/lib/inbound-config";
+import { INBOUND_RATE_WINDOW_SECONDS, inboundRateLimit } from "@/lib/inbound-config";
 import { hashSecret, hashesMatch } from "@/lib/inbound-crypto";
 import { bearerToken, BodyTooLargeError, readLimitedJson, requestIp } from "@/lib/inbound-request";
 import { idempotencyKeySchema, inboundLeadSchema } from "@/lib/inbound-validation";
@@ -86,15 +82,12 @@ export async function POST(request: Request) {
     const idempotencyHash = parsedKey?.success ? hashSecret(parsedKey.data) : null;
 
     if (idempotencyHash) {
-      await prisma.inboundSubmission.deleteMany({
-        where: { sourceId: source.id, expiresAt: { lte: now } },
-      });
       const existing = await prisma.inboundSubmission.findUnique({
         where: { sourceId_idempotencyHash: { sourceId: source.id, idempotencyHash } },
-        select: { leadId: true, expiresAt: true },
+        select: { leadId: true },
       });
-      if (existing && existing.expiresAt > now) {
-        return json({ success: true, id: existing.leadId }, 201);
+      if (existing) {
+        return json({ success: true, id: existing.leadId, deduplicated: true }, 200);
       }
     }
 
@@ -119,7 +112,6 @@ export async function POST(request: Request) {
               sourceId: source.id,
               idempotencyHash,
               leadId: created.id,
-              expiresAt: new Date(now.getTime() + INBOUND_IDEMPOTENCY_TTL_SECONDS * 1000),
             },
           });
           return created;
@@ -130,7 +122,9 @@ export async function POST(request: Request) {
             where: { sourceId_idempotencyHash: { sourceId: source.id, idempotencyHash } },
             select: { leadId: true },
           });
-          if (existing) return json({ success: true, id: existing.leadId }, 201);
+          if (existing) {
+            return json({ success: true, id: existing.leadId, deduplicated: true }, 200);
+          }
         }
         throw error;
       }
@@ -146,7 +140,7 @@ export async function POST(request: Request) {
       });
     }
 
-    return json({ success: true, id: lead.id }, 201);
+    return json({ success: true, id: lead.id, deduplicated: false }, 201);
   } catch {
     return json({ success: false, error: "Unable to process request" }, 500);
   }

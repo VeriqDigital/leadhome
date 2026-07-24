@@ -87,7 +87,7 @@ function Field({
         type={type}
         placeholder={placeholder}
         autoComplete={name === "password" ? "current-password" : name}
-        className="h-11 w-full rounded-xl border border-black/[0.1] bg-white px-3.5 text-sm text-[#17181c] outline-none transition placeholder:text-[#9297a1] focus:border-[#7770c8] focus:ring-2 focus:ring-[#7770c8]/15"
+        className="h-11 w-full rounded-xl border border-black/10 bg-white px-3.5 text-sm text-[#17181c] outline-none transition placeholder:text-[#9297a1] focus:border-[#7770c8] focus:ring-2 focus:ring-[#7770c8]/15"
       />
       {error && (
         <span className="mt-1.5 block text-xs text-red-600">{error}</span>
