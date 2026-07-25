@@ -4,11 +4,11 @@ import { generateSourceToken, hashSecret } from "@/lib/inbound-crypto";
 
 export async function createInboundSource(userId: string, name: string) {
   const token = generateSourceToken();
-  const source = await prisma.inboundSource.create({
+  await prisma.inboundSource.create({
     data: { userId, name, tokenHash: hashSecret(token) },
-    select: { id: true, name: true },
+    select: { id: true },
   });
-  return { ...source, token };
+  return token;
 }
 
 export async function rotateInboundSource(userId: string, sourceId: string) {

@@ -1,20 +1,20 @@
-import { LeadStatus } from "@prisma/client";
+import type { LeadStatus } from "@prisma/client";
 import { SlidersHorizontal } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-user";
-import { statusLabels } from "@/lib/lead-format";
+import { statusLabels, statusValues } from "@/lib/lead-format";
 import { PipelineRow } from "../components";
 import { SectionPage } from "../section-page";
 
-const colors = [
-  "#8c83d9",
-  "#e7bb5f",
-  "#df9a59",
-  "#df8a59",
-  "#82a86f",
-  "#66ad76",
-  "#9ca3af",
-];
+const colors: Record<LeadStatus, string> = {
+  NEW: "#8c83d9",
+  CONTACTED: "#e7bb5f",
+  FOLLOW_UP: "#df9a59",
+  PROPOSAL_SENT: "#df8a59",
+  NEGOTIATING: "#82a86f",
+  WON: "#66ad76",
+  LOST: "#9ca3af",
+};
 export default async function PipelinePage() {
   const user = await requireUser();
   const rows = await prisma.lead.groupBy({
@@ -33,7 +33,7 @@ export default async function PipelinePage() {
       icon={SlidersHorizontal}
     >
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {Object.values(LeadStatus).map((status, index) => {
+        {statusValues.map((status) => {
           const count = counts[status] ?? 0;
           return (
             <article
@@ -55,7 +55,7 @@ export default async function PipelinePage() {
                 stage={statusLabels[status]}
                 count={count}
                 width={`${(count / maximum) * 100}%`}
-                color={colors[index]}
+                color={colors[status]}
               />
             </article>
           );

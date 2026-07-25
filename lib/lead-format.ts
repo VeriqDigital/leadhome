@@ -1,5 +1,23 @@
 import type { LeadSource, LeadStatus } from "@prisma/client";
 
+export const statusValues = [
+  "NEW",
+  "CONTACTED",
+  "FOLLOW_UP",
+  "PROPOSAL_SENT",
+  "NEGOTIATING",
+  "WON",
+  "LOST",
+] as const satisfies readonly LeadStatus[];
+
+export const sourceValues = [
+  "MANUAL",
+  "WEBSITE",
+  "GMAIL",
+  "FACEBOOK",
+  "PHONE",
+] as const satisfies readonly LeadSource[];
+
 export const statusLabels: Record<LeadStatus, string> = {
   NEW: "New",
   CONTACTED: "Contacted",
@@ -18,18 +36,34 @@ export const sourceLabels: Record<LeadSource, string> = {
   PHONE: "Phone",
 };
 
+export function isLeadStatus(value: unknown): value is LeadStatus {
+  return (
+    typeof value === "string" &&
+    statusValues.some((status) => status === value)
+  );
+}
+
+export function isLeadSource(value: unknown): value is LeadSource {
+  return (
+    typeof value === "string" &&
+    sourceValues.some((source) => source === value)
+  );
+}
+
 export function formatCurrency(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === "") return "No value";
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "No value";
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
     minimumFractionDigits: 0,
     maximumFractionDigits: 2,
-  }).format(Number(value));
+  }).format(amount);
 }
 
 export function formatDate(value: Date | null | undefined) {
-  return value
+  return value && Number.isFinite(value.getTime())
     ? new Intl.DateTimeFormat("en-US", { dateStyle: "medium" }).format(value)
     : "No date";
 }
@@ -55,6 +89,7 @@ export function formatDateOnly(value: unknown) {
 }
 
 export function formatDateTime(value: Date) {
+  if (!Number.isFinite(value.getTime())) return "Unknown time";
   const date = new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
@@ -68,6 +103,9 @@ export function formatDateTime(value: Date) {
 }
 
 export function formatRelativeTime(value: Date, now = new Date()) {
+  if (!Number.isFinite(value.getTime()) || !Number.isFinite(now.getTime())) {
+    return "Unknown time";
+  }
   const seconds = Math.round((value.getTime() - now.getTime()) / 1000);
   const formatter = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
   if (Math.abs(seconds) < 60) return formatter.format(seconds, "second");

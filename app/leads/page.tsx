@@ -1,13 +1,19 @@
 import Link from "next/link";
-import { LeadStatus } from "@prisma/client";
 import { Plus, Search, UsersRound } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-user";
-import { formatCurrency, sourceLabels, statusLabels } from "@/lib/lead-format";
+import {
+  formatCurrency,
+  formatDate,
+  isLeadStatus,
+  sourceLabels,
+  statusLabels,
+  statusValues,
+} from "@/lib/lead-format";
 import { PageHeader } from "../page-header";
 import { StatusBadge } from "../components";
+import { StatusFilter } from "./status-filter";
 
-const statuses = Object.values(LeadStatus);
 export default async function LeadsPage({
   searchParams,
 }: {
@@ -15,9 +21,7 @@ export default async function LeadsPage({
 }) {
   const user = await requireUser();
   const params = await searchParams;
-  const status = statuses.includes(params.status as LeadStatus)
-    ? (params.status as LeadStatus)
-    : undefined;
+  const status = isLeadStatus(params.status) ? params.status : undefined;
   const leads = await prisma.lead.findMany({
     where: {
       userId: user.id,
@@ -60,18 +64,16 @@ export default async function LeadsPage({
               className="h-10 w-full rounded-xl border border-black/9 bg-transparent pl-10 pr-3 text-sm"
             />
           </label>
-          <select
-            name="status"
+          <StatusFilter
             defaultValue={status ?? ""}
-            className="h-10 rounded-xl border border-black/9 bg-transparent px-3 text-sm"
-          >
-            <option value="">All statuses</option>
-            {statuses.map((item) => (
-              <option key={item} value={item}>
-                {statusLabels[item]}
-              </option>
-            ))}
-          </select>
+            options={[
+              { value: "", label: "All statuses" },
+              ...statusValues.map((item) => ({
+                value: item,
+                label: statusLabels[item],
+              })),
+            ]}
+          />
           <button className="h-10 rounded-xl border border-black/9 px-4 text-sm font-semibold">
             Apply filters
           </button>
@@ -117,7 +119,7 @@ export default async function LeadsPage({
                         : "—"}
                     </td>
                     <td className="py-4 text-sm text-[#687080]">
-                      {lead.createdAt.toLocaleDateString()}
+                      {formatDate(lead.createdAt)}
                     </td>
                   </tr>
                 ))}

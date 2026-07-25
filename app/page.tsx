@@ -1,20 +1,24 @@
 import Link from "next/link";
 import {
   BellRing,
-  ChevronDown,
   CircleDollarSign,
   TrendingUp,
   UserRoundPlus,
   UsersRound,
 } from "lucide-react";
-import { LeadStatus } from "@prisma/client";
+import type { LeadStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-user";
-import { sourceLabels, statusLabels } from "@/lib/lead-format";
+import {
+  formatCurrency,
+  formatRelativeTime,
+  sourceLabels,
+  statusLabels,
+  statusValues,
+} from "@/lib/lead-format";
 import {
   DashboardCard,
   Header,
-  LeadRow,
   MetricCard,
   PipelineRow,
   ReminderItem,
@@ -22,7 +26,8 @@ import {
   TaskRow,
   ViewAll,
 } from "./components";
-import { reminders, tasks } from "./data";
+import { demoReminders, demoTasks } from "./demo-fixtures";
+import { RecentLeads, type RecentLead } from "./recent-leads";
 
 const colors: Record<LeadStatus, string> = {
   NEW: "#8c83d9",
@@ -33,13 +38,6 @@ const colors: Record<LeadStatus, string> = {
   WON: "#66ad76",
   LOST: "#9ca3af",
 };
-function timeAgo(date: Date) {
-  const minutes = Math.floor((Date.now() - date.getTime()) / 60000);
-  if (minutes < 60) return `${Math.max(1, minutes)}m ago`;
-  const hours = Math.floor(minutes / 60);
-  return hours < 24 ? `${hours}h ago` : `${Math.floor(hours / 24)}d ago`;
-}
-
 export default async function Home() {
   const user = await requireUser();
   const startOfWeek = new Date();
@@ -50,7 +48,7 @@ export default async function Home() {
       prisma.lead.findMany({
         where: { userId: user.id },
         orderBy: { createdAt: "desc" },
-        take: 5,
+        take: 10,
       }),
       prisma.lead.count({ where: { userId: user.id, status: "NEW" } }),
       prisma.lead.count({ where: { userId: user.id, status: "FOLLOW_UP" } }),
@@ -102,16 +100,31 @@ export default async function Home() {
     },
     {
       label: "Pipeline Value",
-      value: `$${Number(pipelineValue._sum.estimatedValue ?? 0).toLocaleString()}`,
+      value: formatCurrency(pipelineValue._sum.estimatedValue?.toString() ?? 0),
       trend: "Live",
       period: "open opportunities",
       icon: CircleDollarSign,
       tone: "neutral",
     },
   ];
+  const recentLeads: RecentLead[] = recent.map((lead) => ({
+    id: lead.id,
+    initials: lead.name
+      .split(" ")
+      .map((part) => part[0])
+      .join("")
+      .slice(0, 2)
+      .toUpperCase(),
+    name: lead.name,
+    source: sourceLabels[lead.source],
+    time: formatRelativeTime(lead.createdAt),
+    status: statusLabels[lead.status],
+    message: lead.message || lead.company || "No notes added.",
+  }));
+
   return (
     <div className="mx-auto max-w-315">
-      <Header name={user.name ?? "there"} />
+      <Header name={user.name ?? "there"} hour={new Date().getHours()} />
       <section
         aria-label="Lead metrics"
         className="mt-9 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
@@ -131,34 +144,7 @@ export default async function Home() {
             }
           >
             {recent.length ? (
-              <>
-                <ul>
-                  {recent.map((lead) => (
-                    <LeadRow
-                      key={lead.id}
-                      lead={{
-                        id: lead.id,
-                        initials: lead.name
-                          .split(" ")
-                          .map((part) => part[0])
-                          .join("")
-                          .slice(0, 2)
-                          .toUpperCase(),
-                        name: lead.name,
-                        source: sourceLabels[lead.source],
-                        time: timeAgo(lead.createdAt),
-                        status: statusLabels[lead.status],
-                        message:
-                          lead.message || lead.company || "No notes added.",
-                      }}
-                    />
-                  ))}
-                </ul>
-                <div className="flex h-14 items-center justify-center gap-2 text-xs text-[#687080]">
-                  Showing {recent.length} recent leads{" "}
-                  <ChevronDown className="size-4" />
-                </div>
-              </>
+              <RecentLeads leads={recentLeads} />
             ) : (
               <div className="grid min-h-72 place-items-center px-6 text-center">
                 <div>
@@ -181,7 +167,7 @@ export default async function Home() {
           </DashboardCard>
           <DashboardCard title="Reminders" action={<ViewAll />}>
             <div className="flex gap-6 px-6 py-5 max-md:flex-col">
-              {reminders.map((reminder) => (
+              {demoReminders.map((reminder) => (
                 <ReminderItem key={reminder.name} {...reminder} />
               ))}
             </div>
@@ -190,7 +176,7 @@ export default async function Home() {
         <div className="grid gap-5">
           <DashboardCard title="Pipeline Overview">
             <ul className="space-y-6 px-6 py-6">
-              {Object.values(LeadStatus).map((status) => (
+              {statusValues.map((status) => (
                 <PipelineRow
                   key={status}
                   stage={statusLabels[status]}
@@ -203,7 +189,7 @@ export default async function Home() {
           </DashboardCard>
           <DashboardCard title="Upcoming Tasks" action={<ViewAll />}>
             <ul className="px-6">
-              {tasks.map((task) => (
+              {demoTasks.map((task) => (
                 <TaskRow key={task.title} {...task} />
               ))}
             </ul>

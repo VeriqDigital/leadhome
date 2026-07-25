@@ -23,6 +23,7 @@ import {
   testInboundSourceAction,
   type SourceActionState,
 } from "@/app/actions/inbound-source-actions";
+import { formatDate } from "@/lib/lead-format";
 
 type Source = {
   id: string;
@@ -75,8 +76,9 @@ function CopyButton({
 
 function OneTimeTokenPanel({ state }: { state: SourceActionState }) {
   const [dismissedToken, setDismissedToken] = useState<string | null>(null);
+  const token = state.success ? state.data.token : undefined;
 
-  if (!state.token || dismissedToken === state.token) {
+  if (!token || dismissedToken === token) {
     return state.message && !state.success ? (
       <p
         role="status"
@@ -96,7 +98,7 @@ function OneTimeTokenPanel({ state }: { state: SourceActionState }) {
     >
       <button
         type="button"
-        onClick={() => setDismissedToken(state.token ?? null)}
+        onClick={() => setDismissedToken(token)}
         aria-label="Dismiss token"
         className={`absolute right-3 top-3 grid size-8 place-items-center rounded-md text-neutral-400 hover:bg-white/10 hover:text-white ${buttonFocus}`}
       >
@@ -110,9 +112,9 @@ function OneTimeTokenPanel({ state }: { state: SourceActionState }) {
       </div>
       <div className="mt-4 flex flex-col gap-2 sm:flex-row">
         <code className="min-w-0 flex-1 overflow-x-auto rounded-lg border border-white/10 bg-[#090b0d] px-3 py-3 font-mono text-xs text-neutral-200">
-          {state.token}
+          {token}
         </code>
-        <CopyButton value={state.token} label="Copy token" prominent />
+        <CopyButton value={token} label="Copy token" prominent />
       </div>
     </div>
   );
@@ -184,7 +186,7 @@ function WebsiteSourceCard({ source }: { source: Source }) {
             </span>
           </div>
           <p className="mt-1.5 text-xs text-[#777e8a] dark:text-neutral-500">
-            Created {new Date(source.createdAt).toLocaleDateString()} · Source
+            Created {formatDate(new Date(source.createdAt))} · Source
             ID ending {source.id.slice(-6)}
           </p>
         </div>
@@ -369,9 +371,9 @@ function TestConnectionCard({ sources }: { sources: Source[] }) {
             }
           >
             {state.message}{" "}
-            {state.leadId && (
+            {state.success && state.data.leadId && (
               <Link
-                href={`/leads/${state.leadId}`}
+                href={`/leads/${state.data.leadId}`}
                 className="inline-flex items-center gap-1 font-semibold underline underline-offset-4"
               >
                 View lead <ExternalLink className="size-3.5" />

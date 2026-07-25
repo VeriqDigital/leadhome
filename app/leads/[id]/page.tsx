@@ -4,6 +4,7 @@ import { ChevronLeft } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-user";
 import { getLeadActivitiesForUser } from "@/lib/lead-activities";
+import { formatDate } from "@/lib/lead-format";
 import { deleteLeadAction, updateLeadAction } from "../../actions/lead-actions";
 import { ActivityTimeline } from "../activity-timeline";
 import { DeleteLeadButton } from "../delete-lead-button";
@@ -40,7 +41,7 @@ export default async function LeadDetailPage({
                 {lead.name}
               </h1>
               <p className="mt-2 text-sm text-[#687080]">
-                Created {lead.createdAt.toLocaleDateString()}
+                Created {formatDate(lead.createdAt)}
               </p>
             </div>
             <DeleteLeadButton action={remove} />

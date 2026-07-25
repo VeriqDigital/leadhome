@@ -1,5 +1,5 @@
 import { BellRing } from "lucide-react";
-import { reminders } from "../data";
+import { demoReminders } from "../demo-fixtures";
 import { ReminderItem } from "../components";
 import { SectionPage } from "../section-page";
 
@@ -11,7 +11,7 @@ export default function RemindersPage() {
       icon={BellRing}
     >
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {reminders.map((reminder) => (
+        {demoReminders.map((reminder) => (
           <article
             key={reminder.name}
             className="rounded-xl border border-black/6 p-4"

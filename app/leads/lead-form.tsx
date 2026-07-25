@@ -1,34 +1,21 @@
 "use client";
 import { useActionState, useState, useTransition } from "react";
-import type { LeadSource, LeadStatus } from "@prisma/client";
-import { sourceLabels, statusLabels } from "@/lib/lead-format";
-import type { ActionState, CanonicalLead } from "@/lib/validation";
+import {
+  sourceLabels,
+  sourceValues,
+  statusLabels,
+  statusValues,
+} from "@/lib/lead-format";
+import type {
+  CanonicalLead,
+  LeadFormInput,
+  LeadFormValues,
+} from "@/lib/lead-types";
+import type { ActionState } from "@/lib/validation";
 
-type LeadValues = {
-  name?: string;
-  email?: string | null;
-  phone?: string | null;
-  company?: string | null;
-  source?: LeadSource;
-  status?: LeadStatus;
-  message?: string | null;
-  estimatedValue?: string | null;
-  nextFollowUp?: string | null;
-};
-type FormValues = {
-  name: string;
-  email: string;
-  phone: string;
-  company: string;
-  source: LeadSource;
-  status: LeadStatus;
-  message: string;
-  estimatedValue: string;
-  nextFollowUp: string;
-};
 export const canonicalFormValues = (
-  lead?: LeadValues | CanonicalLead,
-): FormValues => ({
+  lead?: LeadFormInput | CanonicalLead,
+): LeadFormValues => ({
   name: lead?.name ?? "",
   email: lead?.email ?? "",
   phone: lead?.phone ?? "",
@@ -40,16 +27,6 @@ export const canonicalFormValues = (
   nextFollowUp: lead?.nextFollowUp ?? "",
 });
 const initial: ActionState = {};
-const sources = ["MANUAL", "WEBSITE", "GMAIL", "FACEBOOK", "PHONE"] as const;
-const statuses = [
-  "NEW",
-  "CONTACTED",
-  "FOLLOW_UP",
-  "PROPOSAL_SENT",
-  "NEGOTIATING",
-  "WON",
-  "LOST",
-] as const;
 export function SaveResultMessage({ state }: { state: ActionState }) {
   const tone = !state.success
     ? "error"
@@ -82,10 +59,10 @@ export function LeadForm({
   submitLabel,
 }: {
   action: (state: ActionState, data: FormData) => Promise<ActionState>;
-  lead?: LeadValues;
+  lead?: LeadFormInput;
   submitLabel: string;
 }) {
-  const [fields, setFields] = useState<FormValues>(() =>
+  const [fields, setFields] = useState<LeadFormValues>(() =>
     canonicalFormValues(lead),
   );
   const [state, formAction, actionPending] = useActionState(
@@ -99,7 +76,7 @@ export function LeadForm({
     setSynchronizedLead(state.lead);
     setFields(canonicalFormValues(state.lead));
   }
-  const update = (field: keyof FormValues, value: string) => {
+  const update = (field: keyof LeadFormValues, value: string) => {
     setFields((current) => ({ ...current, [field]: value }));
   };
   return (
@@ -144,15 +121,17 @@ export function LeadForm({
         <Select
           name="source"
           label="Source"
-          values={sources}
+          values={sourceValues}
           value={fields.source}
+          labelFor={(value) => sourceLabels[value]}
           onChange={(value) => update("source", value)}
         />
         <Select
           name="status"
           label="Status"
-          values={statuses}
+          values={statusValues}
           value={fields.status}
+          labelFor={(value) => statusLabels[value]}
           onChange={(value) => update("status", value)}
         />
         <Field
@@ -228,18 +207,20 @@ function Field({
     </label>
   );
 }
-function Select({
+function Select<T extends string>({
   name,
   label: title,
   values,
   value,
+  labelFor,
   onChange,
 }: {
   name: string;
   label: string;
-  values: readonly string[];
-  value: string;
-  onChange: (value: string) => void;
+  values: readonly T[];
+  value: T;
+  labelFor: (value: T) => string;
+  onChange: (value: T) => void;
 }) {
   return (
     <label className="block">
@@ -247,14 +228,12 @@ function Select({
       <select
         name={name}
         value={value}
-        onChange={(event) => onChange(event.target.value)}
+        onChange={(event) => onChange(event.target.value as T)}
         className="h-11 w-full rounded-xl border border-black/9 bg-transparent px-3.5 text-sm outline-none focus:border-[#7770c8]"
       >
         {values.map((value) => (
           <option key={value} value={value}>
-            {name === "status"
-              ? statusLabels[value as LeadStatus]
-              : sourceLabels[value as LeadSource]}
+            {labelFor(value)}
           </option>
         ))}
       </select>

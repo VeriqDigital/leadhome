@@ -1,4 +1,3 @@
-import type { LeadSource, LeadStatus } from "@prisma/client";
 import type { LucideIcon } from "lucide-react";
 import {
   Activity,
@@ -17,6 +16,8 @@ import {
   formatDateOnly,
   formatDateTime,
   formatRelativeTime,
+  isLeadSource,
+  isLeadStatus,
   sourceLabels,
   statusLabels,
 } from "@/lib/lead-format";
@@ -58,15 +59,11 @@ function has(object: Record<string, unknown>, key: string) {
 }
 
 function status(value: unknown) {
-  return typeof value === "string" && value in statusLabels
-    ? statusLabels[value as LeadStatus]
-    : null;
+  return isLeadStatus(value) ? statusLabels[value] : null;
 }
 
 function source(value: unknown) {
-  return typeof value === "string" && value in sourceLabels
-    ? sourceLabels[value as LeadSource]
-    : null;
+  return isLeadSource(value) ? sourceLabels[value] : null;
 }
 
 function money(value: unknown) {

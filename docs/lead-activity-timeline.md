@@ -9,3 +9,6 @@ the next tracked change because LeadHome cannot reliably reconstruct historical
 events, sources, or timestamps.
 
 Activities are deleted automatically when their lead or owning user is deleted.
+They are read newest-first, with the activity ID used as a deterministic
+tie-breaker for equal timestamps. Lead and activity writes occur in the same
+database transaction.

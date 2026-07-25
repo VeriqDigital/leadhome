@@ -9,8 +9,9 @@ import {
   leadIdSchema,
   leadSchema,
   type ActionState,
-  type CanonicalLead,
 } from "@/lib/validation";
+import type { CanonicalLead } from "@/lib/lead-types";
+import { reportOperationalError } from "@/lib/server-errors";
 
 function values(formData: FormData) {
   const message = formData.get("message");
@@ -93,7 +94,8 @@ export async function createLeadAction(
       });
       return lead.id;
     });
-  } catch {
+  } catch (error) {
+    reportOperationalError("create lead failed", error);
     return { message: "We couldn't save this lead. Please try again." };
   }
 
@@ -161,32 +163,10 @@ export async function updateLeadAction(
       message: "Lead updated.",
       lead: result.lead,
     };
-  } catch {
+  } catch (error) {
+    reportOperationalError("update lead failed", error);
     return { message: "We couldn't update this lead. Please try again." };
   }
-}
-
-export async function changeLeadStatusAction(id: string, formData: FormData) {
-  const user = await requireUser();
-  const parsedId = leadIdSchema.safeParse(id);
-  const parsed = leadSchema
-    .pick({ status: true })
-    .safeParse({ status: formData.get("status") });
-  if (!parsedId.success || !parsed.success) return;
-
-  await prisma.$transaction(async (tx) => {
-    const lead = await tx.lead.findFirst({ where: { id, userId: user.id } });
-    if (!lead || lead.status === parsed.data.status) return;
-    const [activity] = buildLeadUpdateActivities(lead, {
-      ...lead,
-      status: parsed.data.status,
-    });
-    await tx.lead.update({ where: { id }, data: { status: parsed.data.status } });
-    await tx.leadActivity.create({
-      data: { ...activity, leadId: id, userId: user.id },
-    });
-  });
-  revalidateLead(id);
 }
 
 export async function deleteLeadAction(id: string) {

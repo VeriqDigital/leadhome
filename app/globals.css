@@ -19,6 +19,18 @@ body {
 
 button, a { outline-offset: 3px; }
 button:focus-visible, a:focus-visible { outline: 2px solid #7770c8; }
+button:not(:disabled) {
+  cursor: pointer;
+  transition:
+    color 150ms ease,
+    background-color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
 
 .dark { color-scheme: dark; --background: #111216; --foreground: #ececef; }
 .dark .dashboard-main { background: #111216; }

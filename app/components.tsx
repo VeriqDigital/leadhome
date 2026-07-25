@@ -1,12 +1,24 @@
 import type { LucideIcon } from "lucide-react";
 import { Bell, Plus } from "lucide-react";
 import Link from "next/link";
-export function Header({ name = "there" }: { name?: string }) {
+function greetingForHour(hour: number) {
+  if (hour >= 4 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+export function Header({
+  name = "there",
+  hour = new Date().getHours(),
+}: {
+  name?: string;
+  hour?: number;
+}) {
   return (
     <header className="flex items-start justify-between gap-5">
       <div>
         <h1 className="text-[25px] font-semibold tracking-[-0.035em] sm:text-[28px]">
-          Good morning, {name.split(" ")[0]}.
+          {greetingForHour(hour)}, {name.split(" ")[0]}.
         </h1>
         <p className="mt-1.5 text-sm text-[#687080]">
           Here&apos;s what&apos;s happening with your leads today.

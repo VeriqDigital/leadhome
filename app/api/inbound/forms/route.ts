@@ -4,6 +4,7 @@ import { INBOUND_RATE_WINDOW_SECONDS, inboundRateLimit } from "@/lib/inbound-con
 import { hashSecret, hashesMatch } from "@/lib/inbound-crypto";
 import { bearerToken, BodyTooLargeError, readLimitedJson, requestIp } from "@/lib/inbound-request";
 import { idempotencyKeySchema, inboundLeadSchema } from "@/lib/inbound-validation";
+import { reportOperationalError } from "@/lib/server-errors";
 
 export const runtime = "nodejs";
 
@@ -152,7 +153,8 @@ export async function POST(request: Request) {
     }
 
     return json({ success: true, id: lead.id, deduplicated: false }, 201);
-  } catch {
+  } catch (error) {
+    reportOperationalError("inbound form request failed", error);
     return json({ success: false, error: "Unable to process request" }, 500);
   }
 }

@@ -20,7 +20,7 @@ type TrackedLead = {
   nextFollowUpDate: Date | null;
 };
 
-export type ActivityCreate = {
+type ActivityCreate = {
   type: LeadActivityType;
   title: string;
   description?: string;

@@ -6,7 +6,8 @@ LeadHome accepts server-to-server contact form submissions at `POST /api/inbound
 
 1. Set `DATABASE_URL` and `AUTH_SECRET` as described in `.env.example`.
 2. Optionally set `INBOUND_RATE_LIMIT_PER_MINUTE` (default: `20` per source token and IP in a 60-second window).
-3. Apply migrations with `npx prisma migrate deploy`, then run `npx prisma generate`.
+3. Apply migrations with `npm run db:migrate:deploy`, then run
+   `npm run db:generate`.
 4. Put `LEADHOME_URL` and `LEADHOME_SOURCE_TOKEN` in the external website's **server-only** environment. These variables belong to the integrating website, not LeadHome.
 
 Browser CORS access is disabled by default: a request containing an `Origin` header is rejected and no CORS allow headers are returned. Submit the public form to your own website server, then forward it to LeadHome. This prevents the bearer token from being exposed to visitors.
