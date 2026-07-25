@@ -1,94 +1,377 @@
 import "server-only";
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { findLeadForConversation, findLeadForMessage } from "./matching-service";
-import type { MessageProvider } from "./provider";
+import { findLeadForConversation, type LeadMatchResult } from "./matching-service";
+import type {
+  MessageProvider,
+  NormalizedConversation,
+  NormalizedMessage,
+} from "./provider";
 
-export async function importRecentMessages({
+export type ImportSummary = {
+  accountsProcessed: number;
+  conversationsCreated: number;
+  conversationsUpdated: number;
+  messagesCreated: number;
+  messagesSkipped: number;
+  conversationsMatched: number;
+  conversationsNeedingReview: number;
+};
+
+const emptySummary = (): ImportSummary => ({
+  accountsProcessed: 1,
+  conversationsCreated: 0,
+  conversationsUpdated: 0,
+  messagesCreated: 0,
+  messagesSkipped: 0,
+  conversationsMatched: 0,
+  conversationsNeedingReview: 0,
+});
+
+function distinctMessages(messages: NormalizedMessage[]) {
+  const byProviderId = new Map<string, NormalizedMessage>();
+  for (const message of messages) {
+    if (!byProviderId.has(message.providerMessageId)) {
+      byProviderId.set(message.providerMessageId, message);
+    }
+  }
+  return [...byProviderId.values()].sort(
+    (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
+  );
+}
+
+function matchData(match: LeadMatchResult) {
+  return {
+    matchKind: match.kind,
+    matchReason: match.reason,
+    matchCandidateLeadIds:
+      match.kind === "AMBIGUOUS"
+        ? (match.candidateLeadIds as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
+  };
+}
+
+/**
+ * Import ownership rules:
+ * Provider-owned fields are account display/address, provider IDs, subject,
+ * provider metadata, message contents, and last-message time.
+ * User-owned fields are leadId, lifecycle status after creation,
+ * classification after creation, reviewState, and manual-detach intent.
+ *
+ * Activity policy A: the first successful import establishes a silent
+ * historical baseline. Only messages first observed on later imports can add
+ * message activities, preventing a mailbox backfill from flooding timelines.
+ */
+export async function importProviderAccount({
   ownerId,
   provider,
-  displayName,
-  address,
-  providerAccountId,
 }: {
   ownerId: string;
   provider: MessageProvider;
-  displayName: string;
-  address?: string;
-  providerAccountId: string;
-}) {
+}): Promise<ImportSummary> {
+  const normalizedAccount = await provider.getAccount();
+  if (normalizedAccount.provider !== provider.provider) {
+    throw new Error("Provider account type does not match its adapter.");
+  }
+
+  const normalizedConversations = await provider.listRecentConversations();
+  const fetched = await Promise.all(
+    normalizedConversations.map(async (conversation) => {
+      const rawMessages = await provider.listMessages(
+        conversation.providerConversationId,
+      );
+      return {
+        conversation,
+        messages: distinctMessages(rawMessages),
+        rawMessageCount: rawMessages.length,
+      };
+    }),
+  );
+
   const account = await prisma.communicationAccount.upsert({
     where: {
       ownerId_provider_providerAccountId: {
         ownerId,
         provider: provider.provider,
-        providerAccountId,
+        providerAccountId: normalizedAccount.providerAccountId,
       },
     },
     create: {
       ownerId,
       provider: provider.provider,
-      displayName,
-      address,
-      providerAccountId,
+      providerAccountId: normalizedAccount.providerAccountId,
+      displayName: normalizedAccount.displayName,
+      address: normalizedAccount.address,
     },
-    update: { displayName, address },
+    update: {
+      displayName: normalizedAccount.displayName,
+      address: normalizedAccount.address,
+    },
   });
 
-  let conversationsImported = 0;
-  let messagesImported = 0;
-  for (const externalConversation of await provider.listRecentConversations()) {
-    const conversation = await prisma.conversation.upsert({
+  const summary = emptySummary();
+  for (const item of fetched) {
+    await importConversation({
+      ownerId,
+      account: { id: account.id, address: account.address },
+      provider,
+      normalized: item.conversation,
+      messages: item.messages,
+      rawMessageCount: item.rawMessageCount,
+      summary,
+    });
+  }
+
+  await prisma.communicationAccount.update({
+    where: { id: account.id },
+    data: {
+      lastImportedAt: new Date(),
+      lastImportSummary: summary,
+    },
+  });
+  return summary;
+}
+
+async function importConversation({
+  ownerId,
+  account,
+  provider,
+  normalized,
+  messages,
+  rawMessageCount,
+  summary,
+}: {
+  ownerId: string;
+  account: { id: string; address: string | null };
+  provider: MessageProvider;
+  normalized: NormalizedConversation;
+  messages: NormalizedMessage[];
+  rawMessageCount: number;
+  summary: ImportSummary;
+}) {
+  const existing = await prisma.conversation.findUnique({
+    where: {
+      accountId_providerConversationId: {
+        accountId: account.id,
+        providerConversationId: normalized.providerConversationId,
+      },
+    },
+    select: { id: true, baselineImportedAt: true, lastMessageAt: true },
+  });
+  const fetchedLastMessageAt = messages.at(-1)?.occurredAt ?? null;
+  const lastMessageAt =
+    existing?.lastMessageAt &&
+    (!fetchedLastMessageAt || existing.lastMessageAt > fetchedLastMessageAt)
+      ? existing.lastMessageAt
+      : fetchedLastMessageAt;
+  const duplicateWithinProviderBatch = rawMessageCount - messages.length;
+
+  const imported = await prisma.$transaction(async (tx) => {
+    const conversation = await tx.conversation.upsert({
       where: {
         accountId_providerConversationId: {
           accountId: account.id,
-          providerConversationId: externalConversation.providerConversationId,
+          providerConversationId: normalized.providerConversationId,
         },
       },
       create: {
         accountId: account.id,
         ownerId,
         provider: provider.provider,
-        ...externalConversation,
+        providerConversationId: normalized.providerConversationId,
+        subject: normalized.subject,
+        status: normalized.state ?? "OPEN",
+        classification: normalized.suggestedClassification ?? "UNKNOWN",
+        reviewState: normalized.suggestedReviewState ?? "NEEDS_REVIEW",
+        providerMetadata: normalized.metadata,
+        lastMessageAt,
       },
       update: {
-        subject: externalConversation.subject,
-        status: externalConversation.status,
+        subject: normalized.subject,
+        providerMetadata: normalized.metadata,
+        lastMessageAt,
       },
     });
-    conversationsImported += 1;
-    await findLeadForConversation(conversation);
 
-    for (const externalMessage of await provider.listMessages(
-      externalConversation.providerConversationId,
-    )) {
-      const message = await prisma.message.upsert({
-        where: {
-          accountId_providerMessageId: {
+    const providerMessageIds = messages.map((message) => message.providerMessageId);
+    const alreadyImported = providerMessageIds.length
+      ? await tx.message.findMany({
+          where: {
             accountId: account.id,
-            providerMessageId: externalMessage.providerMessageId,
+            providerMessageId: { in: providerMessageIds },
+          },
+          select: { providerMessageId: true },
+        })
+      : [];
+    const alreadyImportedIds = new Set(
+      alreadyImported.map((message) => message.providerMessageId),
+    );
+    const newlyObserved = messages.filter(
+      (message) => !alreadyImportedIds.has(message.providerMessageId),
+    );
+    const created = await tx.message.createMany({
+      data: newlyObserved.map((message) => ({
+        conversationId: conversation.id,
+        accountId: account.id,
+        ownerId,
+        providerMessageId: message.providerMessageId,
+        direction: message.direction,
+        sender: message.sender,
+        recipients: message.recipients,
+        replyTo: message.replyTo,
+        subject: message.subject,
+        bodyText: message.bodyText,
+        bodyHtml: message.bodyHtml,
+        receivedAt: message.occurredAt,
+        internetMessageId: message.internetMessageId,
+        inReplyTo: message.inReplyTo,
+        references: message.references,
+        externalSubmissionId: message.externalSubmissionId,
+        sourceSystem: message.sourceSystem,
+        metadata: message.metadata,
+      })),
+      skipDuplicates: true,
+    });
+
+    if (conversation.baselineImportedAt && conversation.leadId && created.count) {
+      const createdMessages = await tx.message.findMany({
+        where: {
+          accountId: account.id,
+          providerMessageId: {
+            in: newlyObserved.map((message) => message.providerMessageId),
           },
         },
-        create: {
-          conversationId: conversation.id,
-          accountId: account.id,
-          ownerId,
-          providerMessageId: externalMessage.providerMessageId,
-          direction: externalMessage.direction,
-          sender: externalMessage.sender,
-          recipients: externalMessage.recipients,
-          subject: externalMessage.subject,
-          bodyText: externalMessage.bodyText,
-          bodyHtml: externalMessage.bodyHtml,
-          receivedAt: externalMessage.receivedAt,
-          metadata: externalMessage.metadata,
+        select: {
+          id: true,
+          direction: true,
+          subject: true,
         },
-        update: {},
       });
-      messagesImported += 1;
-      await findLeadForMessage(message);
+      await tx.leadActivity.createMany({
+        data: createdMessages.map((message) => ({
+          leadId: conversation.leadId!,
+          userId: ownerId,
+          conversationId: conversation.id,
+          messageId: message.id,
+          type:
+            message.direction === "INBOUND"
+              ? ("MESSAGE_RECEIVED" as const)
+              : ("MESSAGE_SENT" as const),
+          title:
+            message.direction === "INBOUND"
+              ? "Message received"
+              : "Message sent",
+          description: message.subject ?? "No subject",
+        })),
+        skipDuplicates: true,
+      });
     }
-  }
 
-  return { accountId: account.id, conversationsImported, messagesImported };
+    if (!conversation.baselineImportedAt) {
+      await tx.conversation.update({
+        where: { id: conversation.id },
+        data: { baselineImportedAt: new Date() },
+      });
+    }
+    return { conversation, createdMessages: created.count };
+  });
+
+  if (existing) summary.conversationsUpdated++;
+  else summary.conversationsCreated++;
+  summary.messagesCreated += imported.createdMessages;
+  summary.messagesSkipped +=
+    messages.length - imported.createdMessages + Math.max(duplicateWithinProviderBatch, 0);
+
+  const match = await findLeadForConversation({
+    ownerId,
+    conversation: imported.conversation,
+    messages,
+    accountAddress: account.address,
+  });
+  await applyMatch({
+    ownerId,
+    conversationId: imported.conversation.id,
+    match,
+    summary,
+  });
 }
+
+async function applyMatch({
+  ownerId,
+  conversationId,
+  match,
+  summary,
+}: {
+  ownerId: string;
+  conversationId: string;
+  match: LeadMatchResult;
+  summary: ImportSummary;
+}) {
+  const needsReview = await prisma.$transaction(async (tx) => {
+    const current = await tx.conversation.findFirst({
+      where: { id: conversationId, ownerId },
+      select: {
+        leadId: true,
+        subject: true,
+        reviewState: true,
+        manuallyDetached: true,
+      },
+    });
+    if (!current) throw new Error("Imported conversation ownership changed.");
+
+    await tx.conversation.update({
+      where: { id: conversationId },
+      data: matchData(match),
+    });
+    if (match.kind !== "MATCHED") {
+      return current.reviewState === "NEEDS_REVIEW";
+    }
+    if (current.leadId === match.leadId) {
+      if (current.reviewState === "NEEDS_REVIEW") {
+        await tx.conversation.update({
+          where: { id: conversationId },
+          data: { reviewState: "MATCHED" },
+        });
+      }
+      return false;
+    }
+    if (
+      current.leadId ||
+      current.manuallyDetached ||
+      current.reviewState !== "NEEDS_REVIEW"
+    ) {
+      return false;
+    }
+    const attached = await tx.conversation.updateMany({
+      where: {
+        id: conversationId,
+        ownerId,
+        leadId: null,
+        manuallyDetached: false,
+        reviewState: "NEEDS_REVIEW",
+      },
+      data: { leadId: match.leadId, reviewState: "MATCHED" },
+    });
+    if (attached.count) {
+      await tx.leadActivity.create({
+        data: {
+          leadId: match.leadId,
+          userId: ownerId,
+          conversationId,
+          type: "CONVERSATION_LINKED",
+          title: "Conversation attached",
+          description: current.subject ?? "No subject",
+          metadata: { reason: match.reason, automatic: true },
+        },
+      });
+    }
+    return false;
+  });
+
+  if (match.kind === "MATCHED") summary.conversationsMatched++;
+  else if (needsReview) summary.conversationsNeedingReview++;
+}
+
+// Backwards-compatible name used by the development action in Phase 1.
+export const importRecentMessages = importProviderAccount;

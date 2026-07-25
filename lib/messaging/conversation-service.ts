@@ -24,8 +24,9 @@ export type CreateMessageInput = {
   direction: MessageDirection;
   sender: string;
   recipients: string[];
+  replyTo?: string | null;
   subject?: string | null;
-  bodyText: string;
+  bodyText?: string | null;
   bodyHtml?: string | null;
   receivedAt: Date;
   metadata?: Prisma.InputJsonValue;
@@ -67,6 +68,7 @@ export async function createMessage(input: CreateMessageInput) {
         direction: input.direction,
         sender: input.sender,
         recipients: input.recipients,
+        replyTo: input.replyTo,
         subject: input.subject,
         bodyText: input.bodyText,
         bodyHtml: input.bodyHtml,
@@ -125,7 +127,13 @@ export async function attachConversationToLead({
     }
     const updated = await tx.conversation.update({
       where: { id: conversationId },
-      data: { leadId },
+      data: {
+        leadId,
+        manuallyDetached: false,
+        reviewState: "MATCHED",
+        matchKind: "MATCHED",
+        matchReason: "manually attached",
+      },
     });
     await tx.leadActivity.create({
       data: {
@@ -158,7 +166,13 @@ export async function detachConversation({
 
     const updated = await tx.conversation.update({
       where: { id: conversationId },
-      data: { leadId: null },
+      data: {
+        leadId: null,
+        manuallyDetached: true,
+        reviewState: "RESOLVED",
+        matchKind: "NO_MATCH",
+        matchReason: "conversation was manually detached",
+      },
     });
     await tx.leadActivity.create({
       data: {

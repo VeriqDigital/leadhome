@@ -211,7 +211,11 @@ describe("conversation service", () => {
 
     expect(mocks.conversationUpdate).toHaveBeenCalledWith({
       where: { id: conversationId },
-      data: { leadId: null },
+      data: expect.objectContaining({
+        leadId: null,
+        manuallyDetached: true,
+        reviewState: "RESOLVED",
+      }),
     });
     expect(mocks.activityCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({

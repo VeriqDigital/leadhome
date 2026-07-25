@@ -1,10 +1,14 @@
+import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth-user";
 import { prisma } from "@/lib/prisma";
 import {
   attachConversationAction,
+  classifyConversationAction,
   detachConversationAction,
-  importFakeMessagesAction,
+  reviewConversationAction,
 } from "@/app/actions/message-actions";
+import type { ImportSummary } from "@/lib/messaging/import-service";
+import { ImportFakeForm } from "./import-fake-form";
 
 const dateTime = new Intl.DateTimeFormat("en", {
   dateStyle: "medium",
@@ -12,8 +16,9 @@ const dateTime = new Intl.DateTimeFormat("en", {
 });
 
 export default async function DevelopmentMessagesPage() {
+  if (process.env.NODE_ENV === "production") notFound();
   const user = await requireUser();
-  const [conversations, leads] = await Promise.all([
+  const [conversations, leads, latestAccount] = await Promise.all([
     prisma.conversation.findMany({
       where: { ownerId: user.id },
       orderBy: { updatedAt: "desc" },
@@ -28,7 +33,17 @@ export default async function DevelopmentMessagesPage() {
       orderBy: { name: "asc" },
       select: { id: true, name: true },
     }),
+    prisma.communicationAccount.findFirst({
+      where: { ownerId: user.id },
+      orderBy: { lastImportedAt: "desc" },
+      select: { lastImportedAt: true, lastImportSummary: true },
+    }),
   ]);
+  const messageCount = conversations.reduce(
+    (count, conversation) => count + conversation.messages.length,
+    0,
+  );
+  const summary = latestAccount?.lastImportSummary as ImportSummary | null;
 
   return (
     <div className="mx-auto max-w-7xl">
@@ -44,12 +59,43 @@ export default async function DevelopmentMessagesPage() {
             Provider fixtures, stored conversations, ownership, and lead attachment.
           </p>
         </div>
-        <form action={importFakeMessagesAction}>
-          <button className="dev-message-import rounded-xl bg-[#17181c] px-4 py-2.5 text-sm font-medium text-white">
-            Import fake fixtures
-          </button>
-        </form>
+        <ImportFakeForm />
       </header>
+
+      <div className="mt-7 grid gap-3 sm:grid-cols-3">
+        <div className="dev-message-card rounded-xl border border-black/[0.06] bg-white p-4">
+          <p className="dev-message-muted text-xs text-[#687080]">Conversations</p>
+          <p className="mt-1 text-2xl font-semibold">{conversations.length}</p>
+        </div>
+        <div className="dev-message-card rounded-xl border border-black/[0.06] bg-white p-4">
+          <p className="dev-message-muted text-xs text-[#687080]">Messages</p>
+          <p className="mt-1 text-2xl font-semibold">{messageCount}</p>
+        </div>
+        <div className="dev-message-card rounded-xl border border-black/[0.06] bg-white p-4">
+          <p className="dev-message-muted text-xs text-[#687080]">Last import</p>
+          <p className="mt-1 text-sm font-semibold">
+            {latestAccount?.lastImportedAt
+              ? dateTime.format(latestAccount.lastImportedAt)
+              : "Not run"}
+          </p>
+        </div>
+      </div>
+
+      {summary && (
+        <section className="dev-message-card mt-4 rounded-xl border border-black/[0.06] bg-white p-4">
+          <h2 className="text-sm font-semibold">Latest import summary</h2>
+          <dl className="mt-3 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4 lg:grid-cols-7">
+            {Object.entries(summary).map(([label, value]) => (
+              <div key={label}>
+                <dt className="dev-message-muted text-[#687080]">
+                  {label.replace(/([A-Z])/g, " $1").toLowerCase()}
+                </dt>
+                <dd className="mt-1 font-semibold">{value}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      )}
 
       <div className="mt-8 space-y-5">
         {conversations.length === 0 ? (
@@ -68,6 +114,12 @@ export default async function DevelopmentMessagesPage() {
                   <span className="dev-message-badge rounded-md bg-[#f1f2f4] px-2 py-1 text-[11px] font-medium">
                     {conversation.status}
                   </span>
+                  <span className="dev-message-badge rounded-md bg-[#f1f2f4] px-2 py-1 text-[11px] font-medium">
+                    {conversation.classification}
+                  </span>
+                  <span className="dev-message-badge rounded-md bg-[#f1f2f4] px-2 py-1 text-[11px] font-medium">
+                    {conversation.reviewState}
+                  </span>
                 </div>
                 <p className="dev-message-muted mt-1 text-xs text-[#687080]">
                   {conversation.provider} · {conversation.account.displayName} ·{" "}
@@ -79,11 +131,22 @@ export default async function DevelopmentMessagesPage() {
                     {conversation.lead?.name ?? "Unattached"}
                   </span>
                 </p>
+                <p className="dev-message-muted mt-1 text-xs text-[#687080]">
+                  Match: {conversation.matchKind ?? "NOT_RUN"} ·{" "}
+                  {conversation.matchReason ?? "No match result yet"}
+                </p>
+                <p className="dev-message-muted mt-1 text-xs text-[#687080]">
+                  Last message:{" "}
+                  {conversation.lastMessageAt
+                    ? dateTime.format(conversation.lastMessageAt)
+                    : "None"}
+                </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex max-w-xl flex-wrap items-center justify-end gap-2">
                 <form action={attachConversationAction} className="flex gap-2">
                   <input type="hidden" name="conversationId" value={conversation.id} />
                   <select
+                    key={`${conversation.id}:lead:${conversation.leadId ?? "unattached"}`}
                     name="leadId"
                     defaultValue={conversation.leadId ?? ""}
                     required
@@ -106,6 +169,42 @@ export default async function DevelopmentMessagesPage() {
                     </button>
                   </form>
                 )}
+                <form action={classifyConversationAction} className="flex gap-2">
+                  <input type="hidden" name="conversationId" value={conversation.id} />
+                  <select
+                    key={`${conversation.id}:classification:${conversation.classification}`}
+                    name="classification"
+                    defaultValue={conversation.classification}
+                    className="dev-message-control rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
+                  >
+                    {["UNKNOWN", "LEAD", "CUSTOMER", "NEWSLETTER", "SPAM", "INTERNAL", "SYSTEM"].map(
+                      (classification) => (
+                        <option key={classification}>{classification}</option>
+                      ),
+                    )}
+                  </select>
+                  <button className="dev-message-control rounded-lg border border-black/10 px-3 py-2 text-sm font-medium">
+                    Classify
+                  </button>
+                </form>
+                <form action={reviewConversationAction} className="flex gap-2">
+                  <input type="hidden" name="conversationId" value={conversation.id} />
+                  <select
+                    key={`${conversation.id}:review:${conversation.reviewState}`}
+                    name="reviewState"
+                    defaultValue={conversation.reviewState}
+                    className="dev-message-control rounded-lg border border-black/10 bg-white px-3 py-2 text-sm"
+                  >
+                    {["NEEDS_REVIEW", "MATCHED", "IGNORED", "RESOLVED"].map(
+                      (reviewState) => (
+                        <option key={reviewState}>{reviewState}</option>
+                      ),
+                    )}
+                  </select>
+                  <button className="dev-message-control rounded-lg border border-black/10 px-3 py-2 text-sm font-medium">
+                    Set review
+                  </button>
+                </form>
               </div>
             </div>
             <div className="divide-y divide-black/[0.05]">
@@ -117,7 +216,9 @@ export default async function DevelopmentMessagesPage() {
                   </div>
                   <div>
                     <p className="text-sm font-medium">{message.sender}</p>
-                    <p className="dev-message-muted mt-1 text-sm text-[#687080]">{message.bodyText}</p>
+                    <p className="dev-message-muted mt-1 text-sm text-[#687080]">
+                      {message.bodyText ?? (message.bodyHtml ? "HTML-only message" : "No body")}
+                    </p>
                     <p className="dev-message-subtle mt-2 text-[11px] text-[#9298a3]">
                       {message.providerMessageId}
                     </p>

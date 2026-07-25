@@ -1,33 +1,56 @@
 import type {
+  ConversationClassification,
+  ConversationReviewState,
   ConversationStatus,
   MessageDirection,
   MessageProvider as ProviderName,
   Prisma,
 } from "@prisma/client";
 
-export type ProviderConversation = {
-  providerConversationId: string;
-  subject: string | null;
-  status: ConversationStatus;
+export type NormalizedProviderAccount = {
+  provider: ProviderName;
+  providerAccountId: string;
+  displayName: string;
+  address?: string | null;
 };
 
-export type ProviderMessage = {
+export type NormalizedMessage = {
   providerMessageId: string;
-  providerConversationId: string;
   direction: MessageDirection;
   sender: string;
   recipients: string[];
-  subject: string | null;
-  bodyText: string;
+  replyTo?: string | null;
+  subject?: string | null;
+  bodyText?: string | null;
   bodyHtml?: string | null;
-  receivedAt: Date;
+  occurredAt: Date;
+  internetMessageId?: string | null;
+  inReplyTo?: string | null;
+  references?: string[];
+  externalSubmissionId?: string | null;
+  sourceSystem?: string | null;
   metadata?: Prisma.InputJsonValue;
 };
 
+export type NormalizedConversation = {
+  providerConversationId: string;
+  subject?: string | null;
+  state?: ConversationStatus;
+  suggestedClassification?: ConversationClassification;
+  suggestedReviewState?: ConversationReviewState;
+  metadata?: Prisma.InputJsonValue;
+};
+
+/**
+ * Provider adapters own normalization. The import pipeline never consumes raw
+ * Gmail, Outlook, or fixture payloads and never branches on a provider name.
+ */
 export interface MessageProvider {
   readonly provider: ProviderName;
-  listRecentConversations(): Promise<ProviderConversation[]>;
-  listMessages(providerConversationId: string): Promise<ProviderMessage[]>;
-  getConversation(providerConversationId: string): Promise<ProviderConversation | null>;
-  getMessage(providerMessageId: string): Promise<ProviderMessage | null>;
+  getAccount(): Promise<NormalizedProviderAccount>;
+  listRecentConversations(): Promise<NormalizedConversation[]>;
+  getConversation(
+    providerConversationId: string,
+  ): Promise<NormalizedConversation | null>;
+  listMessages(providerConversationId: string): Promise<NormalizedMessage[]>;
 }
