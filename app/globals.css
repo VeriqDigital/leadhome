@@ -41,3 +41,49 @@ button:not(:disabled):hover {
 .dark .dashboard-card button,
 .dark .metric-card span[class*="bg-[#f3"] { background: #292b31; color: #b7bbc5; }
 .dark input { border-color: rgba(255,255,255,.12); }
+
+.dark .dev-message-card,
+.dark .dev-message-empty {
+  background: #1a1b20;
+  border-color: rgba(255, 255, 255, 0.09);
+  box-shadow: none;
+}
+.dark .dev-message-empty {
+  color: #aeb3bd;
+}
+.dark .dev-message-import {
+  background: #ececef;
+  color: #17181c;
+}
+.dark .dev-message-import:hover {
+  background: #ffffff;
+}
+.dark .dev-message-card > div,
+.dark .dev-message-card article {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+.dark .dev-message-badge {
+  background: #292b31;
+  color: #d7dae0;
+}
+.dark .dev-message-control {
+  background: #22242a;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #ececef;
+}
+.dark .dev-message-control:hover {
+  background: #2b2e35;
+}
+.dark .dev-message-control option {
+  background: #22242a;
+  color: #ececef;
+}
+.dark .dev-message-muted {
+  color: #aeb3bd;
+}
+.dark .dev-message-primary {
+  color: #e2e4e8;
+}
+.dark .dev-message-subtle {
+  color: #858c98;
+}

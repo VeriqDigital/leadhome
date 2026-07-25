@@ -8,17 +8,20 @@ datasource db {
 }
 
 model User {
-  id             String          @id @default(cuid())
-  name           String
-  email          String          @unique
-  emailVerified  DateTime?
-  image          String?
-  passwordHash   String
-  leads          Lead[]
-  leadActivities LeadActivity[]
-  inboundSources InboundSource[]
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  id                    String                 @id @default(cuid())
+  name                  String
+  email                 String                 @unique
+  emailVerified         DateTime?
+  image                 String?
+  passwordHash          String
+  leads                 Lead[]
+  leadActivities        LeadActivity[]
+  inboundSources        InboundSource[]
+  communicationAccounts CommunicationAccount[]
+  conversations         Conversation[]
+  messages              Message[]
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
 }
 
 model InboundSource {
@@ -69,6 +72,7 @@ model Lead {
   user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   inboundSubmissions InboundSubmission[]
   activities         LeadActivity[]
+  conversations      Conversation[]
   name               String
   email              String?
   phone              String?
@@ -86,19 +90,89 @@ model Lead {
 }
 
 model LeadActivity {
-  id          String           @id @default(cuid())
-  leadId      String
-  userId      String
-  type        LeadActivityType
-  title       String
-  description String?
-  metadata    Json?
-  createdAt   DateTime         @default(now())
-  lead        Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id             String           @id @default(cuid())
+  leadId         String
+  userId         String
+  type           LeadActivityType
+  title          String
+  description    String?
+  metadata       Json?
+  conversationId String?
+  messageId      String?
+  createdAt      DateTime         @default(now())
+  lead           Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation   Conversation?    @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  message        Message?         @relation(fields: [messageId], references: [id], onDelete: SetNull)
 
   @@index([leadId, createdAt])
   @@index([userId, createdAt])
+  @@index([conversationId, createdAt])
+  @@index([messageId, createdAt])
+}
+
+model CommunicationAccount {
+  id                String          @id @default(cuid())
+  ownerId           String
+  owner             User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  provider          MessageProvider
+  displayName       String
+  address           String?
+  providerAccountId String
+  conversations     Conversation[]
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@unique([ownerId, provider, providerAccountId])
+  @@unique([id, ownerId, provider])
+  @@index([ownerId, createdAt])
+}
+
+model Conversation {
+  id                     String               @id @default(cuid())
+  accountId              String
+  account                CommunicationAccount @relation(fields: [accountId, ownerId, provider], references: [id, ownerId, provider], onDelete: Cascade)
+  ownerId                String
+  owner                  User                 @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  provider               MessageProvider
+  providerConversationId String
+  leadId                 String?
+  lead                   Lead?                @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  subject                String?
+  status                 ConversationStatus   @default(OPEN)
+  messages               Message[]
+  activities             LeadActivity[]
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+
+  @@unique([accountId, providerConversationId])
+  @@unique([id, ownerId])
+  @@unique([id, ownerId, accountId])
+  @@index([ownerId, updatedAt])
+  @@index([leadId, updatedAt])
+}
+
+model Message {
+  id                String           @id @default(cuid())
+  conversationId    String
+  accountId         String
+  conversation      Conversation     @relation(fields: [conversationId, ownerId, accountId], references: [id, ownerId, accountId], onDelete: Cascade)
+  ownerId           String
+  owner             User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  providerMessageId String
+  direction         MessageDirection
+  sender            String
+  recipients        Json
+  subject           String?
+  bodyText          String
+  bodyHtml          String?
+  receivedAt        DateTime
+  metadata          Json?
+  activities        LeadActivity[]
+  createdAt         DateTime         @default(now())
+
+  @@unique([accountId, providerMessageId])
+  @@index([ownerId, receivedAt])
 }
 
 enum LeadSource {
@@ -129,4 +203,30 @@ enum LeadActivityType {
   COMPANY_CHANGED
   NOTES_CHANGED
   SOURCE_CHANGED
+  MESSAGE_RECEIVED
+  MESSAGE_SENT
+  CONVERSATION_LINKED
+  CONVERSATION_UNLINKED
+}
+
+enum MessageProvider {
+  FAKE
+  GMAIL
+  OUTLOOK
+  MICROSOFT_365
+  FACEBOOK_MESSENGER
+  INSTAGRAM
+  SMS
+  WHATSAPP
+}
+
+enum ConversationStatus {
+  OPEN
+  ARCHIVED
+  SPAM
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
 }

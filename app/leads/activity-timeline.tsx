@@ -8,6 +8,10 @@ import {
   ContactRound,
   Globe2,
   ListChecks,
+  Link2,
+  Link2Off,
+  Mail,
+  Send,
   UserRoundPlus,
   Waypoints,
 } from "lucide-react";
@@ -33,6 +37,10 @@ const icons: Record<string, LucideIcon> = {
   COMPANY_CHANGED: Building2,
   NOTES_CHANGED: ClipboardPenLine,
   SOURCE_CHANGED: Waypoints,
+  MESSAGE_RECEIVED: Mail,
+  MESSAGE_SENT: Send,
+  CONVERSATION_LINKED: Link2,
+  CONVERSATION_UNLINKED: Link2Off,
 };
 
 export type TimelineActivity = {
