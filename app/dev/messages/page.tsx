@@ -21,11 +21,12 @@ export default async function DevelopmentMessagesPage() {
   const [conversations, leads, latestAccount] = await Promise.all([
     prisma.conversation.findMany({
       where: { ownerId: user.id },
-      orderBy: { updatedAt: "desc" },
+      orderBy: [{ lastMessageAt: "desc" }, { id: "desc" }],
+      take: 20,
       include: {
         account: { select: { displayName: true } },
         lead: { select: { id: true, name: true } },
-        messages: { orderBy: { receivedAt: "asc" } },
+        _count: { select: { messages: true } },
       },
     }),
     prisma.lead.findMany({
@@ -40,7 +41,7 @@ export default async function DevelopmentMessagesPage() {
     }),
   ]);
   const messageCount = conversations.reduce(
-    (count, conversation) => count + conversation.messages.length,
+    (count, conversation) => count + conversation._count.messages,
     0,
   );
   const summary = latestAccount?.lastImportSummary as ImportSummary | null;
@@ -97,7 +98,8 @@ export default async function DevelopmentMessagesPage() {
         </section>
       )}
 
-      <div className="mt-8 space-y-5">
+      <p className="dev-message-muted mt-6 text-xs text-[#687080]">Showing the newest 20 conversation summaries. Open the production Inbox to load one message thread at a time.</p>
+      <div className="mt-4 space-y-5">
         {conversations.length === 0 ? (
           <div className="dev-message-empty rounded-2xl border border-dashed border-black/15 bg-white p-10 text-center text-sm text-[#687080]">
             No conversations yet. Import the development fixtures to begin.
@@ -207,24 +209,8 @@ export default async function DevelopmentMessagesPage() {
                 </form>
               </div>
             </div>
-            <div className="divide-y divide-black/[0.05]">
-              {conversation.messages.map((message) => (
-                <article key={message.id} className="grid gap-2 p-5 md:grid-cols-[150px_1fr]">
-                  <div className="dev-message-muted text-xs text-[#687080]">
-                    <p className="dev-message-primary font-semibold text-[#343840]">{message.direction}</p>
-                    <p className="mt-1">{dateTime.format(message.receivedAt)}</p>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">{message.sender}</p>
-                    <p className="dev-message-muted mt-1 text-sm text-[#687080]">
-                      {message.bodyText ?? (message.bodyHtml ? "HTML-only message" : "No body")}
-                    </p>
-                    <p className="dev-message-subtle mt-2 text-[11px] text-[#9298a3]">
-                      {message.providerMessageId}
-                    </p>
-                  </div>
-                </article>
-              ))}
+            <div className="border-t border-black/[0.05] p-4 text-xs text-[#687080]">
+              {conversation._count.messages} stored messages · Provider conversation ID: {conversation.providerConversationId}
             </div>
           </section>
         ))}

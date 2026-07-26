@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Gauge,
   Home,
+  Inbox,
   LogOut,
   Menu,
   Moon,
@@ -24,6 +25,7 @@ import { logoutAction } from "./actions/auth-actions";
 const items = [
   { label: "Dashboard", href: "/", icon: Gauge },
   { label: "Leads", href: "/leads", icon: UsersRound },
+  { label: "Inbox", href: "/inbox", icon: Inbox },
   { label: "Pipeline", href: "/pipeline", icon: SlidersHorizontal },
   { label: "Tasks", href: "/tasks", icon: SquareCheckBig },
   { label: "Reminders", href: "/reminders", icon: BellRing },

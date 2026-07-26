@@ -214,6 +214,8 @@ model Conversation {
   @@index([leadId, updatedAt])
   @@index([ownerId, reviewState, lastMessageAt])
   @@index([ownerId, classification, lastMessageAt])
+  @@index([ownerId, status, lastMessageAt, id])
+  @@index([ownerId, provider, lastMessageAt, id])
 }
 
 model Message {

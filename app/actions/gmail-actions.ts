@@ -25,6 +25,7 @@ export async function syncGmailAction(formData: FormData) {
     });
   }
   revalidatePath("/settings");
+  revalidatePath("/inbox");
 }
 
 export async function disconnectGmailAction(formData: FormData) {

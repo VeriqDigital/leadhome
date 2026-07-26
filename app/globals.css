@@ -42,6 +42,74 @@ button:not(:disabled):hover {
 .dark .metric-card span[class*="bg-[#f3"] { background: #292b31; color: #b7bbc5; }
 .dark input { border-color: rgba(255,255,255,.12); }
 
+.dark .inbox-shell {
+  background: #1a1b20;
+  border-color: rgba(255, 255, 255, 0.09);
+  color: #ececef;
+  box-shadow: none;
+}
+.dark .inbox-shell section,
+.dark .inbox-shell header,
+.dark .inbox-shell form,
+.dark .inbox-shell nav,
+.dark .inbox-shell article,
+.dark .inbox-shell a {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+.dark .inbox-filters {
+  background: #1d1f24;
+}
+.dark .inbox-shell input,
+.dark .inbox-shell select {
+  background: #24262c;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #ececef;
+}
+.dark .inbox-shell input::placeholder {
+  color: #858c98;
+}
+.dark .inbox-shell select option {
+  background: #24262c;
+  color: #ececef;
+}
+.dark .inbox-row {
+  color: #ececef;
+  background: #1a1b20;
+}
+.dark .inbox-row:hover {
+  background: #22242a;
+}
+.dark .inbox-row-selected,
+.dark .inbox-row-selected:hover {
+  background: #302d4a;
+}
+.dark .inbox-shell [class*="text-[#"] {
+  color: #aeb3bd;
+}
+.dark .inbox-shell h2,
+.dark .inbox-shell .font-semibold {
+  color: #ececef;
+}
+.dark .inbox-shell span[class*="bg-[#f1"] {
+  background: #292b31;
+  color: #d7dae0;
+}
+.dark .inbox-detail-header {
+  background: #1d1f24;
+}
+.dark .inbox-match {
+  background: #24262c;
+  color: #d7dae0;
+}
+.dark .inbox-message-inbound {
+  background: #25272d;
+  color: #ececef;
+}
+.dark .inbox-message-outbound {
+  background: #302d4a;
+  color: #f0effb;
+}
+
 .dark .dev-message-card,
 .dark .dev-message-empty {
   background: #1a1b20;

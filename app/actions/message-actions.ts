@@ -10,6 +10,7 @@ import {
 import {
   setConversationClassification,
   setConversationReviewState,
+  setConversationStatus,
 } from "@/lib/messaging/conversation-decision-service";
 import { FakeProvider } from "@/lib/messaging/fake-provider";
 import { importRecentMessages } from "@/lib/messaging/import-service";
@@ -31,6 +32,7 @@ const reviewStateSchema = z.enum([
   "IGNORED",
   "RESOLVED",
 ]);
+const statusSchema = z.enum(["OPEN", "CLOSED", "ARCHIVED"]);
 
 function assertDevelopment() {
   if (process.env.NODE_ENV === "production") {
@@ -81,47 +83,59 @@ export async function importFakeMessagesAction(
 }
 
 export async function attachConversationAction(formData: FormData) {
-  assertDevelopment();
   const user = await requireUser();
   const parsed = z.object({
     conversationId: idSchema,
     leadId: idSchema,
   }).safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return;
+  if (!parsed.success) throw new Error("Invalid conversation attachment.");
   await attachConversationToLead({ ...parsed.data, ownerId: user.id });
   revalidatePath("/dev/messages");
+  revalidatePath("/inbox");
   revalidatePath(`/leads/${parsed.data.leadId}`);
 }
 
 export async function detachConversationAction(formData: FormData) {
-  assertDevelopment();
   const user = await requireUser();
   const parsed = idSchema.safeParse(formData.get("conversationId"));
-  if (!parsed.success) return;
+  if (!parsed.success) throw new Error("Invalid conversation.");
   await detachConversation({ conversationId: parsed.data, ownerId: user.id });
   revalidatePath("/dev/messages");
+  revalidatePath("/inbox");
 }
 
 export async function classifyConversationAction(formData: FormData) {
-  assertDevelopment();
   const user = await requireUser();
   const parsed = z.object({
     conversationId: idSchema,
     classification: classificationSchema,
   }).safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return;
+  if (!parsed.success) throw new Error("Invalid classification.");
   await setConversationClassification({ ...parsed.data, ownerId: user.id });
   revalidatePath("/dev/messages");
+  revalidatePath("/inbox");
 }
 
 export async function reviewConversationAction(formData: FormData) {
-  assertDevelopment();
   const user = await requireUser();
   const parsed = z.object({
     conversationId: idSchema,
     reviewState: reviewStateSchema,
   }).safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return;
+  if (!parsed.success) throw new Error("Invalid review state.");
   await setConversationReviewState({ ...parsed.data, ownerId: user.id });
+  revalidatePath("/dev/messages");
+  revalidatePath("/inbox");
+}
+
+export async function statusConversationAction(formData: FormData) {
+  const user = await requireUser();
+  const parsed = z.object({
+    conversationId: idSchema,
+    status: statusSchema,
+  }).safeParse(Object.fromEntries(formData));
+  if (!parsed.success) throw new Error("Invalid conversation status.");
+  await setConversationStatus({ ...parsed.data, ownerId: user.id });
+  revalidatePath("/inbox");
   revalidatePath("/dev/messages");
 }
