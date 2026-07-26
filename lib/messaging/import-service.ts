@@ -76,18 +76,24 @@ export async function importProviderAccount({
   }
 
   const normalizedConversations = await provider.listRecentConversations();
-  const fetched = await Promise.all(
-    normalizedConversations.map(async (conversation) => {
+  const fetched: Array<{ conversation: NormalizedConversation; messages: NormalizedMessage[]; rawMessageCount: number }> = [];
+  // Provider calls are deliberately bounded to avoid mailbox API quota spikes.
+  for (let index = 0; index < normalizedConversations.length; index += 5) {
+    const batch = await Promise.all(normalizedConversations.slice(index, index + 5).map(async (conversation) => {
       const rawMessages = await provider.listMessages(
         conversation.providerConversationId,
       );
       return {
-        conversation,
+        conversation: {
+          ...conversation,
+          subject: conversation.subject ?? rawMessages.at(-1)?.subject ?? null,
+        },
         messages: distinctMessages(rawMessages),
         rawMessageCount: rawMessages.length,
       };
-    }),
-  );
+    }));
+    fetched.push(...batch);
+  }
 
   const account = await prisma.communicationAccount.upsert({
     where: {

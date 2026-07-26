@@ -1,10 +1,13 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import Google from "next-auth/providers/google";
+import { PrismaAdapter } from "@auth/prisma-adapter";
 import { compare } from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { credentialsSchema } from "@/lib/validation";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
+  adapter: PrismaAdapter(prisma),
   pages: { signIn: "/login" },
   session: { strategy: "jwt" },
   providers: [
@@ -20,6 +23,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         });
         if (
           !user ||
+          !user.passwordHash ||
           !(await compare(parsed.data.password, user.passwordHash))
         ) {
           return null;
@@ -27,8 +31,20 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         return { id: user.id, name: user.name, email: user.email };
       },
     }),
+    Google({
+      clientId: process.env.GOOGLE_CLIENT_ID ?? "google-not-configured",
+      clientSecret:
+        process.env.GOOGLE_CLIENT_SECRET ?? "google-not-configured",
+      authorization: { params: { scope: "openid email profile" } },
+    }),
   ],
   callbacks: {
+    signIn({ account, profile }) {
+      if (account?.provider === "google" && profile && profile.email_verified !== true) {
+        return false;
+      }
+      return true;
+    },
     jwt({ token, user }) {
       if (user?.id) token.id = user.id;
       return token;

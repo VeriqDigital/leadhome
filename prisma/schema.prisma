@@ -9,11 +9,12 @@ datasource db {
 
 model User {
   id                    String                 @id @default(cuid())
-  name                  String
+  name                  String?
   email                 String                 @unique
   emailVerified         DateTime?
   image                 String?
-  passwordHash          String
+  passwordHash          String?
+  accounts              Account[]
   leads                 Lead[]
   leadActivities        LeadActivity[]
   inboundSources        InboundSource[]
@@ -22,6 +23,25 @@ model User {
   messages              Message[]
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
 }
 
 model InboundSource {
@@ -113,9 +133,9 @@ model LeadActivity {
 }
 
 model CommunicationAccount {
-  id                String          @id @default(cuid())
+  id                String                     @id @default(cuid())
   ownerId           String
-  owner             User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner             User                       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   provider          MessageProvider
   displayName       String
   address           String?
@@ -123,12 +143,41 @@ model CommunicationAccount {
   conversations     Conversation[]
   lastImportedAt    DateTime?
   lastImportSummary Json?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  status            CommunicationAccountStatus @default(CONNECTED)
+  grantedScopes     String?
+  tokenExpiresAt    DateTime?
+  lastSyncError     String?
+  disconnectedAt    DateTime?
+  gmailCredential   GmailCredential?
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
 
   @@unique([ownerId, provider, providerAccountId])
+  @@unique([provider, providerAccountId])
   @@unique([id, ownerId, provider])
   @@index([ownerId, createdAt])
+}
+
+model GmailCredential {
+  id                     String               @id @default(cuid())
+  communicationAccountId String               @unique
+  communicationAccount   CommunicationAccount @relation(fields: [communicationAccountId], references: [id], onDelete: Cascade)
+  encryptedRefreshToken  String
+  encryptedAccessToken   String?
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+}
+
+model OAuthState {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  userId    String
+  purpose   String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, expiresAt])
 }
 
 model Conversation {
@@ -274,4 +323,10 @@ enum ConversationMatchKind {
 enum MessageDirection {
   INBOUND
   OUTBOUND
+}
+
+enum CommunicationAccountStatus {
+  CONNECTED
+  RECONNECT_REQUIRED
+  DISCONNECTED
 }

@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { useActionState } from "react";
 import type { ActionState } from "@/lib/validation";
+import { googleLoginAction } from "@/app/actions/auth-actions";
 
 const initialState: ActionState = {};
 export function AuthForm({
@@ -14,7 +15,18 @@ export function AuthForm({
   const [state, formAction, pending] = useActionState(action, initialState);
   const register = mode === "register";
   return (
-    <form action={formAction} className="mt-8 space-y-5 text-[#17181c]">
+    <div className="mt-8 text-[#17181c]">
+    {!register && (
+      <>
+        <form action={googleLoginAction}>
+          <button className="h-11 w-full rounded-xl border border-black/10 bg-white text-sm font-semibold">
+            Continue with Google
+          </button>
+        </form>
+        <div className="my-5 flex items-center gap-3 text-xs text-[#9297a1] before:h-px before:flex-1 before:bg-black/10 after:h-px after:flex-1 after:bg-black/10">or</div>
+      </>
+    )}
+    <form action={formAction} className="space-y-5">
       {register && (
         <Field
           name="name"
@@ -60,7 +72,7 @@ export function AuthForm({
           {register ? "Sign in" : "Create an account"}
         </Link>
       </p>
-    </form>
+    </form></div>
   );
 }
 function Field({

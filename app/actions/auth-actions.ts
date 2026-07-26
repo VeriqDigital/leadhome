@@ -72,3 +72,25 @@ export async function registerAction(
 export async function logoutAction() {
   await signOut({ redirectTo: "/login" });
 }
+
+export async function googleLoginAction() {
+  await signIn("google", { redirectTo: "/" });
+}
+
+export async function linkGoogleAction() {
+  const user = await import("@/lib/auth-user").then(({ requireUser }) => requireUser());
+  await signIn("google", { redirectTo: `/settings?linked=${encodeURIComponent(user.id)}` });
+}
+
+export async function unlinkGoogleAction() {
+  const user = await import("@/lib/auth-user").then(({ requireUser }) => requireUser());
+  const record = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { passwordHash: true, accounts: { select: { id: true, provider: true } } },
+  });
+  const google = record?.accounts.find((account) => account.provider === "google");
+  const otherLogin = Boolean(record?.passwordHash) || record!.accounts.some((account) => account.provider !== "google");
+  if (!google || !otherLogin) return;
+  await prisma.account.deleteMany({ where: { id: google.id, userId: user.id, provider: "google" } });
+  redirect("/settings?google=unlinked");
+}
