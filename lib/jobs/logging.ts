@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { JobType } from "@prisma/client";
+import type { ConversationAnalysisTrigger } from "./types";
 
 export type JobLogEvent =
   | "job_queued"
@@ -10,6 +11,14 @@ export type JobLogEvent =
   | "job_completed"
   | "job_failed"
   | "job_cancelled"
+  | "analysis_queued"
+  | "analysis_job_reused"
+  | "analysis_unchanged_skipped"
+  | "analysis_started"
+  | "analysis_completed"
+  | "analysis_failed"
+  | "analysis_cancelled"
+  | "analysis_enqueue_failed"
   | "stale_job_recovered"
   | "jobs_purged";
 
@@ -23,6 +32,16 @@ export type JobLogDetails = {
   count?: number;
   messagesCreated?: number;
   conversationsProcessed?: number;
+  conversationAnalysisId?: string;
+  trigger?: ConversationAnalysisTrigger;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  inputTruncated?: boolean;
+  queued?: number;
+  reused?: number;
+  skipped?: number;
+  failed?: number;
 };
 
 export function logJobEvent(

@@ -1,9 +1,13 @@
 # Background jobs
 
-LeadHome uses a deliberately small PostgreSQL-backed job queue. Gmail sync is
-its first workload. The queue is generic enough for another bounded job type,
-but it is not a workflow engine and does not execute arbitrary user-supplied
-code or payloads.
+LeadHome uses a deliberately small PostgreSQL-backed job queue. Gmail sync and
+Conversation Intelligence use the same queue, claim, lease, retry,
+cancellation, and retention machinery. It is not a workflow engine and does
+not execute arbitrary user-supplied code or payloads.
+
+Conversation Intelligence architecture, privacy boundaries, eligibility,
+hashing, structured output, and provider configuration are documented in
+[`conversation-intelligence.md`](./conversation-intelligence.md).
 
 ## Gmail sync lifecycle
 
@@ -257,6 +261,12 @@ All settings are server-only and must never use a `NEXT_PUBLIC_` prefix.
 | `JOB_RUNNER_URL` | Full endpoint used by the local worker; HTTPS is required except for loopback development, and credentials/query strings are rejected |
 | `JOB_WORKER_POLL_INTERVAL_MS` | Local polling delay, minimum one second |
 | `GMAIL_SYNC_THREAD_LIMIT` | Maximum Gmail threads in one job, capped at 100 |
+| `OPENAI_API_KEY` | Server-only OpenAI credential required for Conversation Intelligence |
+| `OPENAI_CONVERSATION_ANALYSIS_MODEL` | Explicit server-side model used for conversation analysis |
+| `AI_ANALYSIS_MAX_INPUT_CHARS` | Bounded normalized conversation input; defaults to 60,000 |
+| `AI_ANALYSIS_REQUEST_TIMEOUT_MS` | Provider timeout, also bounded by the worker deadline; defaults to 45 seconds |
+| `AI_ANALYSIS_VERSION` | Content/prompt version included in idempotent analysis hashing |
+| `RUN_OPENAI_SMOKE_TEST` | Explicit opt-in for a synthetic live-provider smoke test; normal tests never call OpenAI |
 
 Rotate `JOB_RUNNER_SECRET` through the deployment secret store. A rotation may
 briefly require updating external triggers and workers at the same time.
@@ -279,12 +289,14 @@ and stale recovery. They include job/type identifiers, attempt, duration, and
 bounded counts. They omit OAuth data, message content, provider payloads, and
 stack traces that could contain customer information.
 
-The generic JSON result can later carry bounded provider-neutral usage
-metadata, such as a model name, token counts, and estimated cost. No
-OpenAI-specific columns or AI calls are part of this phase.
+Conversation-analysis Jobs retain only bounded operational result metadata.
+Canonical `ConversationAnalysis` records retain the model, input/output/total
+token counts, duration, content hash, and truncation state. Pricing is not
+hardcoded and no monetary cost estimate is stored.
 
 ## Intentionally deferred
 
-This phase does not implement AI processing, automatic scheduled Gmail sync,
-email sending, Gmail modification, WebSockets, Kafka, microservices,
-user-configurable workflows, a visual automation builder, teams, or billing.
+The job system does not implement automatic scheduled Gmail sync, email
+sending, Gmail modification, WebSockets, Kafka, microservices,
+user-configurable workflows, a visual automation builder, autonomous actions,
+teams, or billing.

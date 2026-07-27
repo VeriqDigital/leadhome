@@ -42,6 +42,29 @@ export class JobCancelledError extends JobExecutionError {
   }
 }
 
+export class JobLeaseLostError extends Error {
+  constructor() {
+    super("The job lease is no longer owned by this worker.");
+    this.name = "JobLeaseLostError";
+  }
+}
+
+export class ConversationAnalysisAttemptError extends JobExecutionError {
+  readonly conversationId: string;
+  readonly attemptedContentHash: string;
+
+  constructor(
+    error: JobExecutionError,
+    conversationId: string,
+    attemptedContentHash: string,
+  ) {
+    super(error.code, error.safeMessage, error.retryable, { cause: error });
+    this.name = "ConversationAnalysisAttemptError";
+    this.conversationId = conversationId;
+    this.attemptedContentHash = attemptedContentHash;
+  }
+}
+
 export function normalizeJobError(error: unknown): JobExecutionError {
   if (error instanceof JobExecutionError) return error;
   return new JobExecutionError(

@@ -322,6 +322,52 @@ describe("provider import pipeline", () => {
     );
   });
 
+  it("reports only conversations where this import inserted messages", async () => {
+    const provider = new MutableProvider();
+    const onConversationChanged = vi.fn();
+
+    const first = await importProviderAccount({
+      ownerId: "owner-a",
+      provider,
+      options: { onConversationChanged },
+    });
+    const conversationId = [...state.conversations.values()][0].id;
+
+    expect(onConversationChanged).toHaveBeenCalledTimes(1);
+    expect(onConversationChanged).toHaveBeenCalledWith({
+      conversationId,
+      messagesCreated: 2,
+    });
+    expect(first).not.toHaveProperty("changedConversationIds");
+
+    onConversationChanged.mockClear();
+    await importProviderAccount({
+      ownerId: "owner-a",
+      provider,
+      options: { onConversationChanged },
+    });
+    expect(onConversationChanged).not.toHaveBeenCalled();
+
+    provider.messages.get("thread-a")!.push({
+      providerMessageId: "message-callback",
+      direction: "INBOUND",
+      sender: "person@example.com",
+      recipients: ["inbox@example.com"],
+      bodyText: "Please send the proposal.",
+      occurredAt: new Date("2026-07-24T10:00:00.000Z"),
+    });
+    await importProviderAccount({
+      ownerId: "owner-a",
+      provider,
+      options: { onConversationChanged },
+    });
+    expect(onConversationChanged).toHaveBeenCalledOnce();
+    expect(onConversationChanged).toHaveBeenCalledWith({
+      conversationId,
+      messagesCreated: 1,
+    });
+  });
+
   it("deduplicates provider duplicates and stores out-of-order messages chronologically", async () => {
     const provider = new MutableProvider();
     const messages = provider.messages.get("thread-a")!;
@@ -430,13 +476,25 @@ describe("provider import pipeline", () => {
 
   it("remains duplicate-safe when two imports start together", async () => {
     const provider = new MutableProvider();
+    const firstChanged = vi.fn();
+    const secondChanged = vi.fn();
     await Promise.all([
-      importProviderAccount({ ownerId: "owner-a", provider }),
-      importProviderAccount({ ownerId: "owner-a", provider }),
+      importProviderAccount({
+        ownerId: "owner-a",
+        provider,
+        options: { onConversationChanged: firstChanged },
+      }),
+      importProviderAccount({
+        ownerId: "owner-a",
+        provider,
+        options: { onConversationChanged: secondChanged },
+      }),
     ]);
     expect(state.account).not.toBeNull();
     expect(state.conversations).toHaveLength(1);
     expect(state.messages).toHaveLength(2);
+    expect(firstChanged.mock.calls.length + secondChanged.mock.calls.length)
+      .toBe(1);
   });
 
   it("can retry safely after a focused conversation write fails", async () => {

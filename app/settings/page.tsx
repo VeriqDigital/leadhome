@@ -7,6 +7,9 @@ import { headers } from "next/headers";
 import { GmailIntegrations } from "./gmail-integrations";
 import { linkGoogleAction, unlinkGoogleAction } from "@/app/actions/auth-actions";
 import { listRecentJobs } from "@/lib/jobs/service";
+import { conversationAnalysisConfigurationStatus } from "@/lib/ai/config";
+import { latestSuccessfulConversationAnalysisAt } from "@/lib/ai/conversation-analysis/job-service";
+import { ConversationIntelligenceSettings } from "./conversation-intelligence-settings";
 
 export default async function SettingsPage() {
   const user = await requireUser();
@@ -18,19 +21,45 @@ export default async function SettingsPage() {
   const endpoint = host
     ? `${protocol}://${host}/api/inbound/forms`
     : "http://localhost:3000/api/inbound/forms";
-  const [sources, loginUser, gmailAccounts, recentGmailJobs] = await Promise.all([prisma.inboundSource.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-    select: { id: true, name: true, isActive: true, createdAt: true },
-  }), prisma.user.findUnique({
-    where: { id: user.id },
-    select: { passwordHash: true, accounts: { select: { provider: true } } },
-  }), prisma.communicationAccount.findMany({
-    where: { ownerId: user.id, provider: "GMAIL" },
-    orderBy: { createdAt: "desc" },
-    take: 100,
-    select: { id: true, address: true, displayName: true, status: true, lastImportedAt: true, lastImportSummary: true, lastSyncError: true },
-  }), listRecentJobs(user.id, { type: "GMAIL_SYNC", limit: 100 })]);
+  const conversationAnalysisConfiguration =
+    conversationAnalysisConfigurationStatus();
+  const [
+    sources,
+    loginUser,
+    gmailAccounts,
+    recentGmailJobs,
+    latestSuccessfulAnalysisAt,
+  ] = await Promise.all([
+    prisma.inboundSource.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, name: true, isActive: true, createdAt: true },
+    }),
+    prisma.user.findUnique({
+      where: { id: user.id },
+      select: {
+        passwordHash: true,
+        conversationIntelligenceEnabled: true,
+        accounts: { select: { provider: true } },
+      },
+    }),
+    prisma.communicationAccount.findMany({
+      where: { ownerId: user.id, provider: "GMAIL" },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      select: {
+        id: true,
+        address: true,
+        displayName: true,
+        status: true,
+        lastImportedAt: true,
+        lastImportSummary: true,
+        lastSyncError: true,
+      },
+    }),
+    listRecentJobs(user.id, { type: "GMAIL_SYNC", limit: 100 }),
+    latestSuccessfulConversationAnalysisAt(user.id),
+  ]);
   const gmailAccountsWithJobs = gmailAccounts.map((account) => ({
       ...account,
       latestJob: recentGmailJobs.find(
@@ -70,6 +99,16 @@ export default async function SettingsPage() {
             </button>
           </form>
           {hasGoogle && !canUnlinkGoogle && <p className="mt-2 text-xs text-[#687080]">Google cannot be unlinked because it is your only login method.</p>}
+        </div>
+        <div className="border-t border-black/[0.07] pt-8">
+          <ConversationIntelligenceSettings
+            enabled={loginUser?.conversationIntelligenceEnabled ?? false}
+            configurationAvailable={conversationAnalysisConfiguration.available}
+            configurationMessage={conversationAnalysisConfiguration.message}
+            latestSuccessfulAnalysisAt={
+              latestSuccessfulAnalysisAt?.toISOString() ?? null
+            }
+          />
         </div>
         <div className="border-t border-black/[0.07] pt-8">
           <GmailIntegrations accounts={gmailAccountsWithJobs} />

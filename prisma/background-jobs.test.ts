@@ -17,10 +17,11 @@ const migration = readFileSync(
 
 describe("background job schema and migration", () => {
   it("defines one owner-scoped generic job model and its lifecycle enums", () => {
-    expect(schema).toContain("jobs                  Job[]");
+    expect(schema).toMatch(/\bjobs\s+Job\[\]/);
     expect(schema).toMatch(/model Job \{[\s\S]*ownerId\s+String/);
+    expect(schema).toMatch(/enum JobType \{[\s\S]*GMAIL_SYNC/);
     expect(schema).toMatch(
-      /enum JobType \{\s+GMAIL_SYNC\s+\}/,
+      /enum JobType \{[\s\S]*CONVERSATION_ANALYSIS/,
     );
     for (const status of [
       "PENDING",

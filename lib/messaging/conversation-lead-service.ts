@@ -4,6 +4,9 @@ import type { LeadSource, LeadStatus, MessageProvider, Prisma } from "@prisma/cl
 import { prisma } from "@/lib/prisma";
 import { hashSecret } from "@/lib/inbound-crypto";
 import { normalizeEmailAddresses } from "./matching-service";
+import {
+  enqueueConversationAnalysisAfterLeadLink,
+} from "@/lib/ai/conversation-analysis/job-service";
 
 export type ConversationLeadPrefill = {
   name: string;
@@ -149,7 +152,7 @@ export async function createLeadFromConversation({
   duplicateChoice?: "attach-existing" | "create-separate";
   duplicateLeadId?: string | null;
 }) {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const conversation = await tx.conversation.findFirst({
       where: { id: conversationId, ownerId },
       select: {
@@ -218,6 +221,8 @@ export async function createLeadFromConversation({
     await attach(tx, ownerId, conversation, created.id);
     return { leadId: created.id, created: true };
   });
+  await enqueueConversationAnalysisAfterLeadLink(ownerId, conversationId);
+  return result;
 }
 
 async function attach(

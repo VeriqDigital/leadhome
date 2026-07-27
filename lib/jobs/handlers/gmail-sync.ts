@@ -1,6 +1,6 @@
 import "server-only";
 
-import { Prisma, type Job } from "@prisma/client";
+import { JobType, Prisma, type Job } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { isRevokedGrant } from "@/lib/gmail/gmail-client";
 import { GmailProvider } from "@/lib/messaging/gmail-provider";
@@ -12,6 +12,7 @@ import { prisma } from "@/lib/prisma";
 import {
   JobCancelledError,
   JobExecutionError,
+  JobLeaseLostError,
 } from "@/lib/jobs/errors";
 import { heartbeatJob, withJobLease } from "@/lib/jobs/service";
 import {
@@ -22,16 +23,16 @@ import type {
   GmailSyncJobProgress,
   GmailSyncJobResult,
 } from "@/lib/jobs/types";
+import {
+  enqueueConversationAnalysisJob,
+} from "@/lib/ai/conversation-analysis/job-service";
+import { logJobEvent } from "@/lib/jobs/logging";
+
+// Kept as a compatibility export for existing handler tests and callers.
+export { JobLeaseLostError };
 
 const PROGRESS_CHECKPOINT_INTERVAL_MS = 10_000;
 const PROGRESS_CHECKPOINT_SIZE = 5;
-
-export class JobLeaseLostError extends Error {
-  constructor() {
-    super("The job lease is no longer owned by this worker.");
-    this.name = "JobLeaseLostError";
-  }
-}
 
 function safeProviderStatus(error: unknown) {
   if (typeof error !== "object" || error === null) return null;
@@ -230,6 +231,7 @@ export async function runGmailSyncJob(
   let lastCheckpointAt = 0;
   let lastCheckpointProcessed = -1;
   let lastCheckpointPhase = "";
+  const changedConversationIds = new Set<string>();
 
   try {
     assertDeadline(deadlineAt);
@@ -286,6 +288,9 @@ export async function runGmailSyncJob(
       ),
       options: {
         persistAccountSummary: false,
+        onConversationChanged(change) {
+          changedConversationIds.add(change.conversationId);
+        },
         async onProgress(importProgress) {
           assertDeadline(deadlineAt);
           const now = Date.now();
@@ -333,6 +338,37 @@ export async function runGmailSyncJob(
       percent: 100,
       message: "Gmail synchronization is ready to complete.",
     });
+    let analysisQueued = 0;
+    let analysisReused = 0;
+    let analysisSkipped = 0;
+    let analysisFailed = 0;
+    for (const conversationId of changedConversationIds) {
+      try {
+        const analysis = await enqueueConversationAnalysisJob({
+          ownerId: job.ownerId,
+          conversationId,
+          trigger: "GMAIL_IMPORT",
+          force: false,
+        });
+        if (analysis.kind === "queued") analysisQueued++;
+        else if (analysis.kind === "existing") analysisReused++;
+        else analysisSkipped++;
+      } catch {
+        analysisFailed++;
+      }
+    }
+    if (changedConversationIds.size) {
+      logJobEvent("analysis_queued", {
+        jobId: job.id,
+        jobType: JobType.CONVERSATION_ANALYSIS,
+        ownerId: job.ownerId,
+        trigger: "GMAIL_IMPORT",
+        queued: analysisQueued,
+        reused: analysisReused,
+        skipped: analysisSkipped,
+        failed: analysisFailed,
+      });
+    }
     await storeAccountSuccess({
       jobId: job.id,
       workerId,

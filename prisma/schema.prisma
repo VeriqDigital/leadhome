@@ -8,23 +8,25 @@ datasource db {
 }
 
 model User {
-  id                    String                 @id @default(cuid())
-  name                  String?
-  email                 String                 @unique
-  emailVerified         DateTime?
-  image                 String?
-  passwordHash          String?
-  accounts              Account[]
-  leads                 Lead[]
-  leadActivities        LeadActivity[]
-  inboundSources        InboundSource[]
-  communicationAccounts CommunicationAccount[]
-  conversations         Conversation[]
-  messages              Message[]
-  tasks                 Task[]
-  jobs                  Job[]
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
+  id                              String                 @id @default(cuid())
+  name                            String?
+  email                           String                 @unique
+  emailVerified                   DateTime?
+  image                           String?
+  passwordHash                    String?
+  accounts                        Account[]
+  leads                           Lead[]
+  leadActivities                  LeadActivity[]
+  inboundSources                  InboundSource[]
+  communicationAccounts           CommunicationAccount[]
+  conversations                   Conversation[]
+  messages                        Message[]
+  tasks                           Task[]
+  jobs                            Job[]
+  conversationAnalyses            ConversationAnalysis[]
+  conversationIntelligenceEnabled Boolean                @default(false)
+  createdAt                       DateTime               @default(now())
+  updatedAt                       DateTime               @updatedAt
 }
 
 model Account {
@@ -211,6 +213,7 @@ model Conversation {
   messages               Message[]
   activities             LeadActivity[]
   tasks                  Task[]
+  analysis               ConversationAnalysis?
   createdAt              DateTime                   @default(now())
   updatedAt              DateTime                   @updatedAt
 
@@ -307,6 +310,39 @@ model Job {
   @@index([status, availableAt, createdAt, id])
   @@index([status, heartbeatAt, lockedAt, id])
   @@index([ownerId, type, createdAt, id])
+}
+
+model ConversationAnalysis {
+  id                 String                     @id @default(cuid())
+  ownerId            String
+  owner              User                       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  conversationId     String
+  conversation       Conversation               @relation(fields: [conversationId, ownerId], references: [id, ownerId], onDelete: Cascade)
+  latestJobId        String?
+  status             ConversationAnalysisStatus @default(NOT_ANALYZED)
+  contentHash        String?
+  analysisVersion    String
+  summary            String?
+  structuredData     Json?
+  model              String?
+  inputTokens        Int?
+  outputTokens       Int?
+  totalTokens        Int?
+  durationMs         Int?
+  sourceMessageCount Int                        @default(0)
+  inputTruncated     Boolean                    @default(false)
+  lastErrorCode      String?
+  lastErrorMessage   String?
+  queuedAt           DateTime?
+  startedAt          DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+
+  @@unique([conversationId, ownerId])
+  @@index([ownerId, status, updatedAt])
+  @@index([ownerId, completedAt])
+  @@index([latestJobId])
 }
 
 enum LeadSource {
@@ -423,6 +459,7 @@ enum TaskStatus {
 
 enum JobType {
   GMAIL_SYNC
+  CONVERSATION_ANALYSIS
 }
 
 enum JobStatus {
@@ -432,4 +469,14 @@ enum JobStatus {
   COMPLETED
   FAILED
   CANCELLED
+}
+
+enum ConversationAnalysisStatus {
+  NOT_ANALYZED
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  SKIPPED
 }

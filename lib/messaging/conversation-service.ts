@@ -7,6 +7,9 @@ import type {
   Prisma,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import {
+  enqueueConversationAnalysisAfterLeadLink,
+} from "@/lib/ai/conversation-analysis/job-service";
 
 export type CreateConversationInput = {
   ownerId: string;
@@ -102,7 +105,7 @@ export async function attachConversationToLead({
   leadId: string;
   ownerId: string;
 }) {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const [conversation, lead] = await Promise.all([
       tx.conversation.findFirst({
         where: { id: conversationId, ownerId },
@@ -111,7 +114,9 @@ export async function attachConversationToLead({
       tx.lead.findFirst({ where: { id: leadId, userId: ownerId }, select: { id: true } }),
     ]);
     if (!conversation || !lead) throw new Error("Conversation or lead not found.");
-    if (conversation.leadId === leadId) return conversation;
+    if (conversation.leadId === leadId) {
+      return { conversation, changed: false };
+    }
 
     if (conversation.leadId) {
       await tx.leadActivity.create({
@@ -149,8 +154,12 @@ export async function attachConversationToLead({
       where: { id: leadId },
       data: { updatedAt: new Date() },
     });
-    return updated;
+    return { conversation: updated, changed: true };
   });
+  if (result.changed) {
+    await enqueueConversationAnalysisAfterLeadLink(ownerId, conversationId);
+  }
+  return result.conversation;
 }
 
 export async function detachConversation({

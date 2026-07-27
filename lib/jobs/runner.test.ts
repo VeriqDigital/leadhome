@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { JobCancelledError, JobExecutionError } from "./errors";
+import type { Job } from "@prisma/client";
+import {
+  ConversationAnalysisAttemptError,
+  JobCancelledError,
+  JobExecutionError,
+} from "./errors";
 
 const mocks = vi.hoisted(() => ({
   claim: vi.fn(),
@@ -9,6 +14,9 @@ const mocks = vi.hoisted(() => ({
   recover: vi.fn(),
   purge: vi.fn(),
   runGmail: vi.fn(),
+  runAnalysis: vi.fn(),
+  reconcileAnalysis: vi.fn(),
+  reconcileFailedAnalysis: vi.fn(),
   log: vi.fn(),
 }));
 
@@ -27,12 +35,20 @@ vi.mock("./handlers/gmail-sync", () => {
     JobLeaseLostError,
   };
 });
+vi.mock("./handlers/conversation-analysis", () => ({
+  runConversationAnalysisJob: mocks.runAnalysis,
+}));
+vi.mock("@/lib/ai/conversation-analysis/job-service", () => ({
+  reconcileConversationAnalysisAfterCompletion: mocks.reconcileAnalysis,
+  reconcileConversationAnalysisAfterTerminalFailure:
+    mocks.reconcileFailedAnalysis,
+}));
 vi.mock("./logging", () => ({ logJobEvent: mocks.log }));
 
 import { runJobInvocation } from "./runner";
 
 const now = new Date("2026-07-27T20:00:00.000Z");
-const job = (id: string) => ({
+const job = (id: string): Job => ({
   id,
   ownerId: "owner-a",
   type: "GMAIL_SYNC",
@@ -54,7 +70,7 @@ const job = (id: string) => ({
   idempotencyKey: "account-a",
   createdAt: now,
   updatedAt: now,
-}) as never;
+});
 
 const result = {
   accountsProcessed: 1,
@@ -70,12 +86,38 @@ const result = {
   completedAt: now.toISOString(),
 };
 
+const analysisResult = {
+  conversationAnalysisId: "cm123456789012345678901234",
+  contentHash: "a".repeat(64),
+  analysisVersion: "conversation-v1",
+  outcome: "COMPLETED",
+  model: "configured-model",
+  inputTokens: 100,
+  outputTokens: 50,
+  totalTokens: 150,
+  durationMs: 250,
+  inputTruncated: false,
+} as const;
+
 beforeEach(() => {
+  mocks.claim.mockReset();
+  mocks.complete.mockReset();
+  mocks.completeCancelled.mockReset();
+  mocks.retry.mockReset();
+  mocks.recover.mockReset();
+  mocks.purge.mockReset();
+  mocks.runGmail.mockReset();
+  mocks.runAnalysis.mockReset();
+  mocks.reconcileAnalysis.mockReset();
+  mocks.reconcileFailedAnalysis.mockReset();
   mocks.recover.mockResolvedValue({ recovered: 0, retried: 0, failed: 0 });
   mocks.purge.mockResolvedValue({ deleted: 0 });
   mocks.complete.mockResolvedValue(true);
   mocks.completeCancelled.mockResolvedValue(true);
   mocks.runGmail.mockResolvedValue(result);
+  mocks.runAnalysis.mockResolvedValue(analysisResult);
+  mocks.reconcileAnalysis.mockResolvedValue({ kind: "unchanged" });
+  mocks.reconcileFailedAnalysis.mockResolvedValue({ kind: "unchanged" });
 });
 
 describe("generic job invocation", () => {
@@ -109,6 +151,45 @@ describe("generic job invocation", () => {
     expect(mocks.claim).toHaveBeenCalledTimes(2);
   });
 
+  it("dispatches Conversation Analysis through the same worker and reconciles changed content", async () => {
+    const analysisJob: Job = {
+      ...job("job-analysis"),
+      type: "CONVERSATION_ANALYSIS",
+      payload: {
+        conversationId: "cm987654321098765432109876",
+        trigger: "GMAIL_IMPORT",
+        force: false,
+        analysisVersion: "conversation-v1",
+      },
+      idempotencyKey: "cm987654321098765432109876",
+    };
+    mocks.claim.mockResolvedValueOnce(analysisJob).mockResolvedValueOnce(null);
+
+    await expect(
+      runJobInvocation({
+        workerId: "worker-123",
+        maxJobs: 3,
+        timeBudgetMs: 45_000,
+      }),
+    ).resolves.toEqual(expect.objectContaining({ completed: 1 }));
+
+    expect(mocks.runAnalysis).toHaveBeenCalledWith(analysisJob, {
+      workerId: "worker-123",
+      deadlineAt: expect.any(Number),
+    });
+    expect(mocks.complete).toHaveBeenCalledWith(
+      "job-analysis",
+      "worker-123",
+      analysisResult,
+      undefined,
+      "CONVERSATION_ANALYSIS",
+    );
+    expect(mocks.reconcileAnalysis).toHaveBeenCalledWith(
+      "owner-a",
+      "cm987654321098765432109876",
+    );
+  });
+
   it("persists retry and permanent-failure outcomes", async () => {
     mocks.claim.mockResolvedValueOnce(job("job-retry")).mockResolvedValue(null);
     mocks.runGmail.mockRejectedValueOnce(
@@ -134,6 +215,49 @@ describe("generic job invocation", () => {
       maxJobs: 3,
       timeBudgetMs: 45_000,
     })).resolves.toEqual(expect.objectContaining({ failed: 1 }));
+  });
+
+  it("queues a successor after terminal analysis failure only when the handler reports newer content", async () => {
+    const conversationId = "cm987654321098765432109876";
+    const analysisJob: Job = {
+      ...job("job-analysis-failure"),
+      type: "CONVERSATION_ANALYSIS",
+      payload: {
+        conversationId,
+        trigger: "GMAIL_IMPORT",
+        force: false,
+        analysisVersion: "conversation-v1",
+      },
+      idempotencyKey: conversationId,
+    };
+    const providerFailure = new JobExecutionError(
+      "OPENAI_REQUEST_REJECTED",
+      "The provider rejected the request.",
+      false,
+    );
+    mocks.claim.mockResolvedValueOnce(analysisJob).mockResolvedValueOnce(null);
+    mocks.runAnalysis.mockRejectedValueOnce(
+      new ConversationAnalysisAttemptError(
+        providerFailure,
+        conversationId,
+        "b".repeat(64),
+      ),
+    );
+    mocks.retry.mockResolvedValueOnce({ kind: "failed" });
+
+    await expect(
+      runJobInvocation({
+        workerId: "worker-123",
+        maxJobs: 3,
+        timeBudgetMs: 45_000,
+      }),
+    ).resolves.toEqual(expect.objectContaining({ failed: 1 }));
+
+    expect(mocks.reconcileFailedAnalysis).toHaveBeenCalledWith(
+      "owner-a",
+      conversationId,
+      "b".repeat(64),
+    );
   });
 
   it("acknowledges cooperative cancellation", async () => {

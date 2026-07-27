@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   leadUpdate: vi.fn(),
   activityCreate: vi.fn(),
   transaction: vi.fn(),
+  analysisEnqueue: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -24,6 +25,9 @@ vi.mock("@/lib/prisma", () => ({
     message: { findFirst: mocks.messageFind },
     $transaction: mocks.transaction,
   },
+}));
+vi.mock("@/lib/ai/conversation-analysis/job-service", () => ({
+  enqueueConversationAnalysisAfterLeadLink: mocks.analysisEnqueue,
 }));
 
 import {
@@ -51,6 +55,7 @@ beforeEach(() => {
   mocks.leadFind.mockResolvedValue({ id: leadId });
   mocks.leadUpdate.mockResolvedValue({ id: leadId });
   mocks.activityCreate.mockResolvedValue({ id: "activity-a" });
+  mocks.analysisEnqueue.mockResolvedValue(undefined);
   mocks.transaction.mockImplementation((operation) =>
     operation({
       conversation: {
@@ -205,6 +210,11 @@ describe("conversation service", () => {
       where: { id: leadId },
       data: { updatedAt: expect.any(Date) },
     });
+    expect(mocks.analysisEnqueue).toHaveBeenCalledTimes(1);
+    expect(mocks.analysisEnqueue).toHaveBeenCalledWith(ownerId, conversationId);
+    expect(mocks.leadUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.analysisEnqueue.mock.invocationCallOrder[0],
+    );
   });
 
   it("detaches an owned conversation and records the prior lead", async () => {
@@ -229,6 +239,17 @@ describe("conversation service", () => {
         type: "CONVERSATION_UNLINKED",
       }),
     });
+    expect(mocks.analysisEnqueue).not.toHaveBeenCalled();
+  });
+
+  it("does not enqueue analysis when lead attachment fails", async () => {
+    mocks.conversationFind.mockResolvedValue(null);
+
+    await expect(
+      attachConversationToLead({ conversationId, leadId, ownerId }),
+    ).rejects.toThrow("Conversation or lead not found");
+
+    expect(mocks.analysisEnqueue).not.toHaveBeenCalled();
   });
 
   it("scopes provider ID lookups through message and conversation ownership", async () => {

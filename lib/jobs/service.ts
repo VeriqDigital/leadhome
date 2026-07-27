@@ -12,18 +12,25 @@ import { JobExecutionError, normalizeJobError } from "./errors";
 import { logJobEvent } from "./logging";
 import {
   ACTIVE_JOB_STATUSES,
+  type ConversationAnalysisJobProgress,
+  type ConversationAnalysisJobResult,
+  type ConversationAnalysisJobView,
   type EnqueueGmailSyncResult,
   type GmailSyncJobProgress,
   type GmailSyncJobResult,
   type GmailSyncJobView,
   type HeartbeatResult,
   type JobPayloadByType,
+  type JobProgress,
+  type JobResultByType,
   type RetryJobResult,
   isActiveJobStatus,
 } from "./types";
 import {
   gmailSyncJobProgressSchema,
   gmailSyncJobResultSchema,
+  conversationAnalysisJobProgressSchema,
+  conversationAnalysisJobResultSchema,
   parseJobPayload,
   parseJobProgress,
   parseJobResult,
@@ -44,10 +51,15 @@ type EnqueueJobInput<T extends JobType> = {
   availableAt?: Date;
 };
 
-export type EnqueueJobResult = {
-  kind: "queued" | "existing";
-  job: Job;
-};
+export type EnqueueJobResult =
+  | {
+      kind: "queued";
+      job: Job;
+    }
+  | {
+      kind: "existing";
+      job: Job;
+    };
 
 export type CancelJobResult = {
   kind: "cancelled" | "not-found";
@@ -62,7 +74,7 @@ export type DisconnectGmailAccountResult =
       cancellationRequested: number;
     };
 
-function inputJson(value: unknown): Prisma.InputJsonValue {
+export function inputJson(value: unknown): Prisma.InputJsonValue {
   return value as Prisma.InputJsonValue;
 }
 
@@ -109,14 +121,28 @@ async function acquireGmailMailboxMutex(
   `);
 }
 
-async function enqueueJob<T extends JobType>(
+function queuedProgress(type: JobType): JobProgress {
+  return type === JobType.CONVERSATION_ANALYSIS
+    ? {
+        phase: "QUEUED",
+        processed: 0,
+        message: "Conversation analysis queued.",
+      } satisfies ConversationAnalysisJobProgress
+    : {
+        phase: "QUEUED",
+        processed: 0,
+        message: "Sync queued.",
+      } satisfies GmailSyncJobProgress;
+}
+
+export async function enqueueJobInTransaction<T extends JobType>(
   input: EnqueueJobInput<T>,
   client: Pick<Prisma.TransactionClient, "job">,
 ): Promise<EnqueueJobResult> {
   const payload = parseJobPayload(input.type, input.payload);
   const idempotencyKey = input.idempotencyKey?.trim() || null;
-  if (input.type === JobType.GMAIL_SYNC && !idempotencyKey) {
-    throw new Error("Gmail sync jobs require an active idempotency key.");
+  if (!idempotencyKey) {
+    throw new Error("Active jobs require an idempotency key.");
   }
   const configuredMaxAttempts = getJobConfig().maxAttempts;
   const maxAttempts = Math.max(
@@ -138,11 +164,7 @@ async function enqueueJob<T extends JobType>(
       ownerId: input.ownerId,
       type: input.type,
       payload: inputJson(payload),
-      progress: inputJson({
-        phase: "QUEUED",
-        processed: 0,
-        message: "Sync queued.",
-      } satisfies GmailSyncJobProgress),
+      progress: inputJson(queuedProgress(input.type)),
       idempotencyKey,
       maxAttempts,
       availableAt: input.availableAt ?? new Date(),
@@ -186,7 +208,7 @@ export async function enqueueGmailSyncJob(
       select: { id: true },
     });
     if (!account) return null;
-    return enqueueJob({
+    return enqueueJobInTransaction({
       ownerId,
       type: JobType.GMAIL_SYNC,
       payload,
@@ -233,6 +255,57 @@ export function serializeGmailSyncJob(job: Job): GmailSyncJobView {
     updatedAt: job.updatedAt.toISOString(),
     active: isActiveJobStatus(job.status),
   };
+}
+
+export function serializeConversationAnalysisJob(
+  job: Job,
+): ConversationAnalysisJobView {
+  if (job.type !== JobType.CONVERSATION_ANALYSIS) {
+    throw new Error(`Cannot serialize ${job.type} as a conversation analysis job.`);
+  }
+  const progress = job.progress
+    ? conversationAnalysisJobProgressSchema.safeParse(job.progress)
+    : null;
+  const result = job.result
+    ? conversationAnalysisJobResultSchema.safeParse(job.result)
+    : null;
+  return {
+    id: job.id,
+    type: "CONVERSATION_ANALYSIS",
+    status: job.status,
+    progress: progress?.success ? progress.data : null,
+    result: result?.success
+      ? {
+          outcome: result.data.outcome,
+          inputTruncated: result.data.inputTruncated,
+        }
+      : null,
+    attemptCount: job.attemptCount,
+    maxAttempts: job.maxAttempts,
+    availableAt: job.availableAt.toISOString(),
+    queuedAt: job.createdAt.toISOString(),
+    startedAt: job.startedAt?.toISOString() ?? null,
+    completedAt: job.completedAt?.toISOString() ?? null,
+    failedAt: job.failedAt?.toISOString() ?? null,
+    lastErrorCode: job.lastErrorCode,
+    lastErrorMessage: job.lastErrorMessage,
+    updatedAt: job.updatedAt.toISOString(),
+    active: isActiveJobStatus(job.status),
+  };
+}
+
+export async function getConversationAnalysisJob(
+  ownerId: string,
+  jobId: string,
+): Promise<ConversationAnalysisJobView | null> {
+  const job = await prisma.job.findFirst({
+    where: {
+      id: jobId,
+      ownerId,
+      type: JobType.CONVERSATION_ANALYSIS,
+    },
+  });
+  return job ? serializeConversationAnalysisJob(job) : null;
 }
 
 export async function getJob(
@@ -326,7 +399,7 @@ export async function claimNextJob(
 export async function heartbeatJob(
   jobId: string,
   workerId: string,
-  progress?: GmailSyncJobProgress,
+  progress?: JobProgress,
   now: Date = new Date(),
 ): Promise<HeartbeatResult> {
   const lockOwner = validWorkerId(workerId);
@@ -405,28 +478,39 @@ export async function withJobLease<T>(
 export async function completeJob(
   jobId: string,
   workerId: string,
-  result: GmailSyncJobResult,
+  result: JobResultByType[JobType],
   now: Date = new Date(),
+  type: JobType = JobType.GMAIL_SYNC,
 ): Promise<boolean> {
   const lockOwner = validWorkerId(workerId);
-  const parsed = parseJobResult(JobType.GMAIL_SYNC, result);
+  const parsed = parseJobResult(type, result);
+  const progress: JobProgress =
+    type === JobType.CONVERSATION_ANALYSIS
+      ? {
+          phase: "COMPLETED",
+          processed: 1,
+          total: 1,
+          percent: 100,
+          message: "Conversation analysis completed.",
+        }
+      : {
+          phase: "COMPLETED",
+          processed: (parsed as GmailSyncJobResult).conversationsProcessed,
+          total: (parsed as GmailSyncJobResult).conversationsProcessed,
+          percent: 100,
+          message: "Gmail sync completed.",
+        };
   const completed = await prisma.job.updateMany({
     where: {
       id: jobId,
-      type: JobType.GMAIL_SYNC,
+      type,
       status: JobStatus.RUNNING,
       lockedBy: lockOwner,
     },
     data: {
       status: JobStatus.COMPLETED,
       result: inputJson(parsed),
-      progress: inputJson({
-        phase: "COMPLETED",
-        processed: parsed.conversationsProcessed,
-        total: parsed.conversationsProcessed,
-        percent: 100,
-        message: "Gmail sync completed.",
-      } satisfies GmailSyncJobProgress),
+      progress: inputJson(progress),
       completedAt: now,
       failedAt: null,
       lastErrorCode: null,
@@ -438,17 +522,34 @@ export async function completeJob(
     },
   });
   if (completed.count === 1) {
-    const durationMs = Math.max(
-      0,
-      Date.parse(parsed.completedAt) - Date.parse(parsed.startedAt),
-    );
+    const durationMs =
+      type === JobType.CONVERSATION_ANALYSIS
+        ? (parsed as ConversationAnalysisJobResult).durationMs ?? undefined
+        : Math.max(
+            0,
+            Date.parse((parsed as GmailSyncJobResult).completedAt) -
+              Date.parse((parsed as GmailSyncJobResult).startedAt),
+          );
     logJobEvent("job_completed", {
       jobId,
-      jobType: JobType.GMAIL_SYNC,
+      jobType: type,
       workerId: lockOwner,
       durationMs: Number.isFinite(durationMs) ? durationMs : undefined,
-      messagesCreated: parsed.messagesCreated,
-      conversationsProcessed: parsed.conversationsProcessed,
+      ...(type === JobType.GMAIL_SYNC
+        ? {
+            messagesCreated: (parsed as GmailSyncJobResult).messagesCreated,
+            conversationsProcessed:
+              (parsed as GmailSyncJobResult).conversationsProcessed,
+          }
+        : {
+            model: (parsed as ConversationAnalysisJobResult).model ?? undefined,
+            inputTokens:
+              (parsed as ConversationAnalysisJobResult).inputTokens ?? undefined,
+            outputTokens:
+              (parsed as ConversationAnalysisJobResult).outputTokens ?? undefined,
+            inputTruncated:
+              (parsed as ConversationAnalysisJobResult).inputTruncated,
+          }),
     });
   }
   return completed.count === 1;
@@ -511,6 +612,7 @@ export async function retryJob(
     select: {
       attemptCount: true,
       maxAttempts: true,
+      type: true,
     },
   });
   if (!current) return { kind: "lost" };
@@ -532,11 +634,7 @@ export async function retryJob(
     data: {
       status: JobStatus.RETRY_SCHEDULED,
       availableAt,
-      progress: inputJson({
-        phase: "QUEUED",
-        processed: 0,
-        message: "Retry scheduled.",
-      } satisfies GmailSyncJobProgress),
+      progress: inputJson(queuedProgress(current.type)),
       lastErrorCode: safeError.code,
       lastErrorMessage: safeError.safeMessage,
       lockedAt: null,
@@ -810,11 +908,7 @@ export async function recoverStaleJobs(
               availableAt: new Date(
                 now.getTime() + retryDelayMs(job.attemptCount, random),
               ),
-              progress: inputJson({
-                phase: "QUEUED",
-                processed: 0,
-                message: "Retry scheduled after an interrupted run.",
-              } satisfies GmailSyncJobProgress),
+              progress: inputJson(queuedProgress(job.type)),
               lastErrorCode: "STALE_JOB_RECOVERED",
               lastErrorMessage:
                 "The previous worker stopped responding. The job will retry.",

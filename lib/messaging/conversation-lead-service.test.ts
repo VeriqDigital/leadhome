@@ -9,6 +9,10 @@ const state = vi.hoisted(() => ({
   sequence: 0,
 }));
 
+const analysis = vi.hoisted(() => ({
+  enqueue: vi.fn(),
+}));
+
 const database = vi.hoisted(() => ({
   conversation: {
     findFirst: vi.fn(async ({ where }: any) => {
@@ -57,15 +61,17 @@ const database = vi.hoisted(() => ({
   inboundSubmission: {
     findFirst: vi.fn(async () => null),
   },
+  $transaction: vi.fn(
+    async (operation: (tx: any) => unknown) => operation(database),
+  ),
 }));
 
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/prisma", () => ({
-  prisma: {
-    ...database,
-    $transaction: (operation: (tx: typeof database) => unknown) =>
-      operation(database),
-  },
+  prisma: database,
+}));
+vi.mock("@/lib/ai/conversation-analysis/job-service", () => ({
+  enqueueConversationAnalysisAfterLeadLink: analysis.enqueue,
 }));
 
 const {
@@ -108,6 +114,7 @@ beforeEach(() => {
     }],
   };
   vi.clearAllMocks();
+  analysis.enqueue.mockResolvedValue(undefined);
 });
 
 describe("create lead from conversation", () => {
@@ -161,6 +168,14 @@ describe("create lead from conversation", () => {
       "CONVERSATION_LINKED",
     ]);
     expect(state.messagesUnchanged).toEqual(before);
+    expect(analysis.enqueue).toHaveBeenCalledTimes(1);
+    expect(analysis.enqueue).toHaveBeenCalledWith(
+      "owner-a",
+      "conversation-a",
+    );
+    expect(database.lead.update.mock.invocationCallOrder[0]).toBeLessThan(
+      analysis.enqueue.mock.invocationCallOrder[0],
+    );
   });
 
   it("requires an explicit choice for duplicate email and can attach existing", async () => {
@@ -185,5 +200,20 @@ describe("create lead from conversation", () => {
     });
     expect(result).toEqual({ leadId: "lead-existing", created: false });
     expect(state.leads).toHaveLength(1);
+    expect(analysis.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not enqueue when the conversation is already attached", async () => {
+    state.conversation.leadId = "lead-existing";
+
+    await expect(
+      createLeadFromConversation({
+        ownerId: "owner-a",
+        conversationId: "conversation-a",
+        lead,
+      }),
+    ).rejects.toThrow("Conversation is already attached");
+
+    expect(analysis.enqueue).not.toHaveBeenCalled();
   });
 });

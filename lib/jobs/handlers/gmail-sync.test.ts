@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   withLease: vi.fn(),
   provider: vi.fn(),
   revalidatePath: vi.fn(),
+  enqueueAnalysis: vi.fn(),
+  logJobEvent: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -34,6 +36,12 @@ vi.mock("@/lib/jobs/service", () => ({
   withJobLease: mocks.withLease,
 }));
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("@/lib/ai/conversation-analysis/job-service", () => ({
+  enqueueConversationAnalysisJob: mocks.enqueueAnalysis,
+}));
+vi.mock("@/lib/jobs/logging", () => ({
+  logJobEvent: mocks.logJobEvent,
+}));
 
 import {
   classifyGmailSyncError,
@@ -91,6 +99,7 @@ beforeEach(() => {
   });
   mocks.updateAccounts.mockResolvedValue({ count: 1 });
   mocks.heartbeat.mockResolvedValue("ok");
+  mocks.enqueueAnalysis.mockResolvedValue({ kind: "queued", job: {} });
   mocks.withLease.mockImplementation(
     async (
       _jobId: string,
@@ -161,6 +170,72 @@ describe("Gmail sync job handler", () => {
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/inbox");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/settings");
+  });
+
+  it("queues separate analysis jobs for changed conversations without changing the Gmail result", async () => {
+    mocks.importAccount.mockImplementationOnce(async ({ options }) => {
+      await options.onConversationChanged({
+        conversationId: "conversation-a",
+        messagesCreated: 2,
+      });
+      await options.onConversationChanged({
+        conversationId: "conversation-a",
+        messagesCreated: 1,
+      });
+      await options.onConversationChanged({
+        conversationId: "conversation-b",
+        messagesCreated: 1,
+      });
+      return summary;
+    });
+
+    const result = await runGmailSyncJob(baseJob as never, {
+      workerId: "worker-123",
+    });
+
+    expect(mocks.enqueueAnalysis).toHaveBeenCalledTimes(2);
+    expect(mocks.enqueueAnalysis).toHaveBeenNthCalledWith(1, {
+      ownerId: "owner-a",
+      conversationId: "conversation-a",
+      trigger: "GMAIL_IMPORT",
+      force: false,
+    });
+    expect(mocks.enqueueAnalysis).toHaveBeenNthCalledWith(2, {
+      ownerId: "owner-a",
+      conversationId: "conversation-b",
+      trigger: "GMAIL_IMPORT",
+      force: false,
+    });
+    expect(result).toEqual(
+      expect.objectContaining({
+        messagesCreated: summary.messagesCreated,
+        conversationsProcessed: 3,
+      }),
+    );
+    expect(result).not.toHaveProperty("changedConversationIds");
+  });
+
+  it("keeps a successful Gmail result when analysis enqueue fails", async () => {
+    mocks.importAccount.mockImplementationOnce(async ({ options }) => {
+      await options.onConversationChanged({
+        conversationId: "conversation-a",
+        messagesCreated: 1,
+      });
+      return summary;
+    });
+    mocks.enqueueAnalysis.mockRejectedValueOnce(
+      new Error("simulated analysis queue outage"),
+    );
+
+    await expect(
+      runGmailSyncJob(baseJob as never, { workerId: "worker-123" }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        messagesCreated: summary.messagesCreated,
+        errors: [],
+      }),
+    );
+    expect(mocks.updateAccounts).toHaveBeenCalled();
   });
 
   it("rejects malformed or credential-bearing payloads before account access", async () => {

@@ -11,6 +11,10 @@ const state = vi.hoisted(() => ({
   activities: 0,
 }));
 
+const analysis = vi.hoisted(() => ({
+  enqueue: vi.fn(),
+}));
+
 const database = vi.hoisted(() => ({
   conversation: {
     findFirst: vi.fn(async ({ where }: { where: { id: string; ownerId: string } }) => {
@@ -45,6 +49,9 @@ const database = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/prisma", () => ({ prisma: database }));
+vi.mock("@/lib/ai/conversation-analysis/job-service", () => ({
+  enqueueConversationAnalysisAfterLeadLink: analysis.enqueue,
+}));
 vi.mock("./conversation-service", () => ({
   attachConversationToLead: vi.fn(async ({ ownerId, conversationId, leadId }) => {
     const row = state.conversations.get(conversationId);
@@ -75,6 +82,7 @@ describe("canonical conversation control mutations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.activities = 0;
+    analysis.enqueue.mockResolvedValue(undefined);
     state.conversations.clear();
     for (const id of ["conversation-a", "conversation-b"]) {
       state.conversations.set(id, {
@@ -172,6 +180,14 @@ describe("canonical conversation control mutations", () => {
       where: { id: "lead-b" },
       data: { updatedAt: expect.any(Date) },
     });
+    expect(analysis.enqueue).toHaveBeenCalledTimes(1);
+    expect(analysis.enqueue).toHaveBeenCalledWith(
+      "owner-a",
+      "conversation-b",
+    );
+    expect(database.lead.update.mock.invocationCallOrder[0]).toBeLessThan(
+      analysis.enqueue.mock.invocationCallOrder[0],
+    );
   });
 
   it("returns a no-op for an unchanged combined save", async () => {
@@ -185,5 +201,27 @@ describe("canonical conversation control mutations", () => {
     });
     expect(result.changed).toBe(false);
     expect(database.conversation.updateMany).not.toHaveBeenCalled();
+    expect(analysis.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("does not enqueue analysis when a combined save detaches a lead", async () => {
+    const current = state.conversations.get("conversation-b")!;
+    state.conversations.set("conversation-b", {
+      ...current,
+      leadId: "lead-b",
+      reviewState: "MATCHED",
+    });
+
+    await updateConversationControls({
+      ownerId: "owner-a",
+      conversationId: "conversation-b",
+      leadId: null,
+      classification: "UNKNOWN",
+      reviewState: "MATCHED",
+      status: "OPEN",
+    });
+
+    expect(state.conversations.get("conversation-b")?.leadId).toBeNull();
+    expect(analysis.enqueue).not.toHaveBeenCalled();
   });
 });

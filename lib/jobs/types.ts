@@ -55,13 +55,59 @@ export type GmailSyncJobResult = {
   completedAt: string;
 };
 
+export type ConversationAnalysisTrigger =
+  | "GMAIL_IMPORT"
+  | "LEAD_LINKED"
+  | "MANUAL_REANALYSIS";
+
+export type ConversationAnalysisJobPayload = {
+  conversationId: string;
+  trigger: ConversationAnalysisTrigger;
+  force: boolean;
+  analysisVersion: string;
+};
+
+export type ConversationAnalysisProgressPhase =
+  | "QUEUED"
+  | "PREPARING"
+  | "ANALYZING"
+  | "SAVING"
+  | "COMPLETED";
+
+export type ConversationAnalysisJobProgress = {
+  phase: ConversationAnalysisProgressPhase;
+  processed: number;
+  total?: number;
+  percent?: number;
+  message: string;
+};
+
+export type ConversationAnalysisJobResult = {
+  conversationAnalysisId: string;
+  contentHash: string;
+  analysisVersion: string;
+  outcome: "COMPLETED" | "SKIPPED_UNCHANGED" | "SKIPPED_NO_CONTENT";
+  model: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  durationMs: number | null;
+  inputTruncated: boolean;
+};
+
 export type JobPayloadByType = {
   GMAIL_SYNC: GmailSyncJobPayload;
+  CONVERSATION_ANALYSIS: ConversationAnalysisJobPayload;
 };
 
 export type JobResultByType = {
   GMAIL_SYNC: GmailSyncJobResult;
+  CONVERSATION_ANALYSIS: ConversationAnalysisJobResult;
 };
+
+export type JobProgress =
+  | GmailSyncJobProgress
+  | ConversationAnalysisJobProgress;
 
 export type GmailSyncJobView = {
   id: string;
@@ -91,6 +137,42 @@ export type EnqueueGmailSyncResult =
     }
   | {
       kind: "not-found";
+    };
+
+export type ConversationAnalysisJobView = {
+  id: string;
+  type: "CONVERSATION_ANALYSIS";
+  status: JobStatus;
+  progress: ConversationAnalysisJobProgress | null;
+  result: Pick<
+    ConversationAnalysisJobResult,
+    "outcome" | "inputTruncated"
+  > | null;
+  attemptCount: number;
+  maxAttempts: number;
+  availableAt: string;
+  queuedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  failedAt: string | null;
+  lastErrorCode: string | null;
+  lastErrorMessage: string | null;
+  updatedAt: string;
+  active: boolean;
+};
+
+export type EnqueueConversationAnalysisResult =
+  | {
+      kind: "queued" | "existing";
+      job: ConversationAnalysisJobView;
+    }
+  | {
+      kind:
+        | "not-found"
+        | "disabled"
+        | "unlinked"
+        | "unchanged"
+        | "no-content";
     };
 
 export type HeartbeatResult = "ok" | "cancelled" | "lost";

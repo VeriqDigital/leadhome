@@ -1,8 +1,19 @@
 import "server-only";
 
 import { JobType, type Job } from "@prisma/client";
-import { normalizeJobError, JobCancelledError } from "./errors";
-import { runGmailSyncJob, JobLeaseLostError } from "./handlers/gmail-sync";
+import {
+  ConversationAnalysisAttemptError,
+  normalizeJobError,
+  JobCancelledError,
+  JobLeaseLostError,
+} from "./errors";
+import { runGmailSyncJob } from "./handlers/gmail-sync";
+import { runConversationAnalysisJob } from "./handlers/conversation-analysis";
+import {
+  reconcileConversationAnalysisAfterCompletion,
+  reconcileConversationAnalysisAfterTerminalFailure,
+} from "@/lib/ai/conversation-analysis/job-service";
+import { conversationAnalysisJobPayloadSchema } from "./validation";
 import { logJobEvent } from "./logging";
 import {
   claimNextJob,
@@ -12,7 +23,7 @@ import {
   recoverStaleJobs,
   retryJob,
 } from "./service";
-import type { GmailSyncJobResult } from "./types";
+import type { JobResultByType } from "./types";
 
 export type JobInvocationStats = {
   claimed: number;
@@ -31,10 +42,12 @@ async function dispatchJob(
   job: Job,
   workerId: string,
   deadlineAt: number,
-): Promise<GmailSyncJobResult> {
+): Promise<JobResultByType[JobType]> {
   switch (job.type) {
     case JobType.GMAIL_SYNC:
       return runGmailSyncJob(job, { workerId, deadlineAt });
+    case JobType.CONVERSATION_ANALYSIS:
+      return runConversationAnalysisJob(job, { workerId, deadlineAt });
   }
 }
 
@@ -54,7 +67,20 @@ async function executeClaimedJob(
   });
   try {
     const result = await dispatchJob(job, workerId, deadlineAt);
-    if (await completeJob(job.id, workerId, result)) return "completed";
+    if (await completeJob(job.id, workerId, result, undefined, job.type)) {
+      if (job.type === JobType.CONVERSATION_ANALYSIS) {
+        const payload = conversationAnalysisJobPayloadSchema.safeParse(
+          job.payload,
+        );
+        if (payload.success) {
+          await reconcileConversationAnalysisAfterCompletion(
+            job.ownerId,
+            payload.data.conversationId,
+          );
+        }
+      }
+      return "completed";
+    }
     return (await completeCancelledJob(job.id, workerId))
       ? "cancelled"
       : "lease-lost";
@@ -72,7 +98,19 @@ async function executeClaimedJob(
       normalizeJobError(error),
     );
     if (retry.kind === "retry-scheduled") return "retried";
-    if (retry.kind === "failed") return "failed";
+    if (retry.kind === "failed") {
+      if (
+        job.type === JobType.CONVERSATION_ANALYSIS &&
+        error instanceof ConversationAnalysisAttemptError
+      ) {
+        await reconcileConversationAnalysisAfterTerminalFailure(
+          job.ownerId,
+          error.conversationId,
+          error.attemptedContentHash,
+        );
+      }
+      return "failed";
+    }
     return (await completeCancelledJob(job.id, workerId))
       ? "cancelled"
       : "lease-lost";

@@ -46,6 +46,7 @@ import {
   recoverStaleJobs,
   retryDelayMs,
   retryJob,
+  serializeConversationAnalysisJob,
   withJobLease,
 } from "./service";
 
@@ -238,6 +239,38 @@ describe("Gmail job enqueue and owner isolation", () => {
       where: { id: jobId, ownerId: "owner-a" },
     });
   });
+
+  it("keeps public analysis job views free of hashes, model names, and token usage", () => {
+    const view = serializeConversationAnalysisJob(job({
+      type: JobType.CONVERSATION_ANALYSIS,
+      payload: {
+        conversationId: accountId,
+        trigger: "MANUAL_REANALYSIS",
+        force: true,
+        analysisVersion: "conversation-v1",
+      },
+      result: {
+        conversationAnalysisId: jobId,
+        contentHash: "a".repeat(64),
+        analysisVersion: "conversation-v1",
+        outcome: "COMPLETED",
+        model: "private-model-name",
+        inputTokens: 100,
+        outputTokens: 50,
+        totalTokens: 150,
+        durationMs: 250,
+        inputTruncated: true,
+      },
+    }));
+
+    expect(view.result).toEqual({
+      outcome: "COMPLETED",
+      inputTruncated: true,
+    });
+    expect(JSON.stringify(view)).not.toMatch(
+      /contentHash|private-model-name|inputTokens|outputTokens|totalTokens/,
+    );
+  });
 });
 
 describe("atomic claiming and lifecycle fencing", () => {
@@ -380,6 +413,70 @@ describe("atomic claiming and lifecycle fencing", () => {
           result,
           lockedAt: null,
           lockedBy: null,
+          idempotencyKey: null,
+        }),
+      }),
+    );
+  });
+
+  it("persists bounded Conversation Analysis progress and completion through the generic service", async () => {
+    await expect(
+      heartbeatJob(
+        jobId,
+        workerId,
+        {
+          phase: "ANALYZING",
+          processed: 1,
+          total: 3,
+          percent: 30,
+          message: "Analyzing the conversation.",
+        },
+        now,
+      ),
+    ).resolves.toBe("ok");
+    expect(mocks.updateJobs).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          progress: expect.objectContaining({ phase: "ANALYZING" }),
+        }),
+      }),
+    );
+
+    const analysisResult = {
+      conversationAnalysisId: "cm123456789012345678901234",
+      contentHash: "a".repeat(64),
+      analysisVersion: "conversation-v1",
+      outcome: "COMPLETED" as const,
+      model: "configured-model",
+      inputTokens: 100,
+      outputTokens: 50,
+      totalTokens: 150,
+      durationMs: 250,
+      inputTruncated: false,
+    };
+    await expect(
+      completeJob(
+        jobId,
+        workerId,
+        analysisResult,
+        now,
+        JobType.CONVERSATION_ANALYSIS,
+      ),
+    ).resolves.toBe(true);
+    expect(mocks.updateJobs).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: {
+          id: jobId,
+          type: JobType.CONVERSATION_ANALYSIS,
+          status: JobStatus.RUNNING,
+          lockedBy: workerId,
+        },
+        data: expect.objectContaining({
+          status: JobStatus.COMPLETED,
+          result: analysisResult,
+          progress: expect.objectContaining({
+            phase: "COMPLETED",
+          }),
           idempotencyKey: null,
         }),
       }),

@@ -11,8 +11,10 @@ import {
   getConversationDetail, listConversationSummaries, type InboxFilters,
 } from "@/lib/messaging/inbox-query";
 import { getLatestGmailSyncJob } from "@/lib/jobs/service";
+import { getConversationIntelligenceView } from "@/lib/ai/conversation-analysis/view-service";
 import { GmailSyncForm } from "./gmail-sync-form";
 import { ConversationControls } from "./conversation-controls";
+import { ConversationIntelligenceCard } from "./conversation-intelligence-card";
 import { completeTaskAction } from "@/app/actions/task-actions";
 import { TaskDue } from "@/app/tasks/task-due";
 
@@ -55,7 +57,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     page: Number.isSafeInteger(pageValue) && pageValue > 0 ? Math.min(pageValue, 10000) : 1,
   };
   const selectedId = one(params.conversation);
-  const [list, detail, leads, gmail] = await Promise.all([
+  const [list, detail, leads, gmail, intelligence] = await Promise.all([
     listConversationSummaries(user.id, filters),
     selectedId ? getConversationDetail(user.id, selectedId) : null,
     selectedId ? prisma.lead.findMany({
@@ -66,6 +68,9 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
       where: { ownerId: user.id, provider: "GMAIL", status: { not: "DISCONNECTED" } },
       select: { id: true, address: true, status: true, lastImportedAt: true, lastImportSummary: true, lastSyncError: true },
     }),
+    selectedId
+      ? getConversationIntelligenceView(user.id, selectedId)
+      : Promise.resolve(null),
   ]);
   const hasFilters = Boolean(filters.query || filters.reviewState || filters.classification || filters.status || filters.provider || filters.attachment);
   const gmailJob = gmail
@@ -134,7 +139,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
 
       <section aria-label="Conversation detail" className={`${selectedId ? "block" : "hidden lg:block"} min-w-0`}>
         {selectedId && !detail ? <div className="grid min-h-[500px] place-items-center p-8 text-center"><div><p className="font-semibold">Conversation not found</p><p className="mt-2 text-sm text-[#687080]">It may have been removed or is not accessible.</p><Link href={href(params, { conversation: undefined })} className="mt-4 inline-block underline">Back to inbox</Link></div></div>
-          : detail ? <ConversationDetail key={detail.id} detail={detail} leads={leads} backHref={href(params, { conversation: undefined })}/>
+          : detail ? <ConversationDetail key={detail.id} detail={detail} leads={leads} backHref={href(params, { conversation: undefined })} intelligence={intelligence}/>
           : <div className="grid min-h-[500px] place-items-center p-8 text-center text-sm text-[#687080]">Select a conversation to review its messages.</div>}
       </section>
     </div>
@@ -146,7 +151,17 @@ function Filter({ name, value, labelText, options }: { name: string; value?: str
 }
 function Badge({ text }: { text: string }) { return <span className="rounded-md bg-[#f1f2f4] px-2 py-1 text-[#555c68]">{text}</span>; }
 
-function ConversationDetail({ detail, leads, backHref }: { detail: Awaited<ReturnType<typeof getConversationDetail>> & {}; leads: { id: string; name: string; email: string | null }[]; backHref: string }) {
+function ConversationDetail({
+  detail,
+  leads,
+  backHref,
+  intelligence,
+}: {
+  detail: Awaited<ReturnType<typeof getConversationDetail>> & {};
+  leads: { id: string; name: string; email: string | null }[];
+  backHref: string;
+  intelligence: Awaited<ReturnType<typeof getConversationIntelligenceView>>;
+}) {
   const recipients = [...new Set(detail.messages.flatMap((message) => Array.isArray(message.recipients) ? message.recipients.filter((item): item is string => typeof item === "string") : []))];
   const candidateIds = Array.isArray(detail.matchCandidateLeadIds)
     ? detail.matchCandidateLeadIds.filter((item): item is string => typeof item === "string")
@@ -170,6 +185,13 @@ function ConversationDetail({ detail, leads, backHref }: { detail: Awaited<Retur
         reviewState={detail.reviewState}
         status={detail.status}
       />
+      {intelligence && (
+        <ConversationIntelligenceCard
+          key={`${intelligence.analysis?.updatedAt ?? "none"}:${intelligence.job?.updatedAt ?? "none"}`}
+          conversationId={detail.id}
+          initialView={intelligence}
+        />
+      )}
       <div className="mt-5 rounded-xl border border-black/[0.08] p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-sm font-semibold">Open tasks</h3>

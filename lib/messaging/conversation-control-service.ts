@@ -11,6 +11,9 @@ import {
   attachConversationToLead,
   detachConversation,
 } from "./conversation-service";
+import {
+  enqueueConversationAnalysisAfterLeadLink,
+} from "@/lib/ai/conversation-analysis/job-service";
 
 const controlsSelect = {
   id: true,
@@ -166,7 +169,7 @@ export async function updateConversationControls(input: {
   reviewState: ConversationReviewState;
   status: ConversationStatus;
 }): Promise<PersistedConversationMutation> {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const current = await readCanonical(tx, input.ownerId, input.conversationId);
     const leadChanged = current.leadId !== input.leadId;
     const classificationChanged = current.classification !== input.classification;
@@ -242,6 +245,20 @@ export async function updateConversationControls(input: {
     }
 
     const canonical = await readCanonical(tx, input.ownerId, input.conversationId);
-    return { changed: true, conversation: dto(canonical) };
+    return {
+      changed: true,
+      conversation: dto(canonical),
+      attached: leadChanged && Boolean(input.leadId),
+    };
   });
+  if (result.changed && "attached" in result && result.attached) {
+    await enqueueConversationAnalysisAfterLeadLink(
+      input.ownerId,
+      input.conversationId,
+    );
+  }
+  return {
+    changed: result.changed,
+    conversation: result.conversation,
+  };
 }

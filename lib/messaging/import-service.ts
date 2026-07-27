@@ -32,6 +32,10 @@ export type ImportProgress = {
 
 export type ImportOptions = {
   onProgress?: (progress: ImportProgress) => Promise<void> | void;
+  onConversationChanged?: (change: {
+    conversationId: string;
+    messagesCreated: number;
+  }) => Promise<void> | void;
   persistAccountSummary?: boolean;
 };
 
@@ -160,7 +164,7 @@ export async function importProviderAccount({
     message: "Importing and matching conversations.",
   });
   for (const [index, item] of fetched.entries()) {
-    await importConversation({
+    const change = await importConversation({
       ownerId,
       account: { id: account.id, address: account.address },
       provider,
@@ -169,6 +173,9 @@ export async function importProviderAccount({
       rawMessageCount: item.rawMessageCount,
       summary,
     });
+    if (change.messagesCreated > 0) {
+      await options?.onConversationChanged?.(change);
+    }
     await options?.onProgress?.({
       phase: "MATCHING",
       processed: index + 1,
@@ -367,6 +374,10 @@ async function importConversation({
     match,
     summary,
   });
+  return {
+    conversationId: imported.conversation.id,
+    messagesCreated: imported.createdMessages,
+  };
 }
 
 async function applyMatch({
