@@ -22,6 +22,7 @@ model User {
   conversations         Conversation[]
   messages              Message[]
   tasks                 Task[]
+  jobs                  Job[]
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
 }
@@ -278,6 +279,36 @@ model Task {
   @@index([conversationId, status, dueAt])
 }
 
+model Job {
+  id               String    @id @default(cuid())
+  ownerId          String
+  owner            User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  type             JobType
+  status           JobStatus @default(PENDING)
+  payload          Json
+  result           Json?
+  progress         Json?
+  attemptCount     Int       @default(0)
+  maxAttempts      Int       @default(3)
+  availableAt      DateTime  @default(now())
+  lockedAt         DateTime?
+  lockedBy         String?
+  heartbeatAt      DateTime?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  failedAt         DateTime?
+  lastErrorCode    String?
+  lastErrorMessage String?
+  idempotencyKey   String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([ownerId, type, idempotencyKey])
+  @@index([status, availableAt, createdAt, id])
+  @@index([status, heartbeatAt, lockedAt, id])
+  @@index([ownerId, type, createdAt, id])
+}
+
 enum LeadSource {
   MANUAL
   WEBSITE
@@ -387,5 +418,18 @@ enum TaskPriority {
 enum TaskStatus {
   OPEN
   COMPLETED
+  CANCELLED
+}
+
+enum JobType {
+  GMAIL_SYNC
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  RETRY_SCHEDULED
+  COMPLETED
+  FAILED
   CANCELLED
 }

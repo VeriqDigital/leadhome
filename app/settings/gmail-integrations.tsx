@@ -1,10 +1,12 @@
 import Link from "next/link";
-import { syncGmailAction } from "@/app/actions/gmail-actions";
+import type { GmailSyncJobView } from "@/lib/jobs/types";
+import { GmailSyncForm } from "@/app/inbox/gmail-sync-form";
 import { DisconnectGmailForm } from "./disconnect-gmail-form";
 
 type GmailAccount = {
   id: string; address: string | null; displayName: string; status: string;
   lastImportedAt: Date | null; lastImportSummary: unknown; lastSyncError: string | null;
+  latestJob: GmailSyncJobView | null;
 };
 
 export function GmailIntegrations({ accounts }: { accounts: GmailAccount[] }) {
@@ -18,13 +20,23 @@ export function GmailIntegrations({ accounts }: { accounts: GmailAccount[] }) {
           <div><p className="font-semibold">{account.address ?? account.displayName}</p>
           <p className="text-sm text-[#687080]">{account.status === "RECONNECT_REQUIRED" ? "Reconnect required" : account.status.toLowerCase()}</p></div>
           <div className="flex flex-wrap gap-2">
-            {account.status === "CONNECTED" && <form action={syncGmailAction}><input type="hidden" name="accountId" value={account.id}/><button className="rounded-lg border border-black/10 px-3 py-2 text-sm">Sync now</button></form>}
+            {account.status === "CONNECTED" && <GmailSyncForm
+              accountId={account.id}
+              initialJob={account.latestJob}
+              lastSuccessfulSyncAt={account.lastImportedAt?.toISOString() ?? null}
+              fallbackSummary={account.lastImportSummary as {
+                conversationsCreated?: number;
+                messagesCreated?: number;
+              } | null}
+              fallbackError={account.lastSyncError}
+              variant="settings"
+            />}
             {account.status !== "CONNECTED" && <Link href="/api/gmail/connect?reconnect=1" className="rounded-lg border border-black/10 px-3 py-2 text-sm">Reconnect</Link>}
             {account.status !== "DISCONNECTED" && <DisconnectGmailForm accountId={account.id} />}
           </div>
         </div>
-        <p className="mt-3 text-xs text-[#687080]">Last successful sync: {account.lastImportedAt?.toLocaleString() ?? "Never"}</p>
-        {account.lastSyncError && <p className="mt-2 text-sm text-red-700">{account.lastSyncError}</p>}
+        {account.status !== "CONNECTED" && <p className="mt-3 text-xs text-[#687080]">Last successful sync: {account.lastImportedAt?.toLocaleString() ?? "Never"}</p>}
+        {account.status !== "CONNECTED" && account.lastSyncError && <p className="mt-2 text-sm text-red-700 dark:text-red-300">{account.lastSyncError}</p>}
         {process.env.NODE_ENV !== "production" && account.lastImportedAt && <Link href="/dev/messages" className="mt-2 inline-block text-sm font-semibold underline">Review imported conversations</Link>}
       </article>
     ))}</div>

@@ -10,6 +10,7 @@ import {
   conversationMessageDate,
   getConversationDetail, listConversationSummaries, type InboxFilters,
 } from "@/lib/messaging/inbox-query";
+import { getLatestGmailSyncJob } from "@/lib/jobs/service";
 import { GmailSyncForm } from "./gmail-sync-form";
 import { ConversationControls } from "./conversation-controls";
 import { completeTaskAction } from "@/app/actions/task-actions";
@@ -67,22 +68,28 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     }),
   ]);
   const hasFilters = Boolean(filters.query || filters.reviewState || filters.classification || filters.status || filters.provider || filters.attachment);
-  const gmailSummary = gmail?.lastImportSummary as { conversationsCreated?: number; messagesCreated?: number } | null;
-  const syncStatus = gmail?.lastImportedAt && gmailSummary
-    ? gmailSummary.conversationsCreated === 0 && gmailSummary.messagesCreated === 0
-      ? "Gmail is up to date. No new conversations or messages were imported."
-      : `Last sync imported ${gmailSummary.conversationsCreated ?? 0} conversations and ${gmailSummary.messagesCreated ?? 0} messages.`
+  const gmailJob = gmail
+    ? await getLatestGmailSyncJob(user.id, gmail.id)
     : null;
+  const gmailSummary = gmail?.lastImportSummary as { conversationsCreated?: number; messagesCreated?: number } | null;
 
   return <div className="mx-auto max-w-[1500px]">
     <header className="flex flex-wrap items-start justify-between gap-4">
       <div><h1 className="flex items-center gap-3 text-3xl font-semibold tracking-[-0.04em]"><Inbox className="size-7"/>Inbox</h1>
         <p className="mt-2 text-sm text-[#687080]">Review imported conversations and connect them to leads.</p></div>
-      {gmail ? <div className="text-right">
-        {gmail.status === "CONNECTED" ? <GmailSyncForm accountId={gmail.id}/>
-          : <Link className="rounded-xl border border-amber-300 px-4 py-2.5 text-sm font-semibold text-amber-800" href="/api/gmail/connect?reconnect=1">Reconnect Gmail</Link>}
-        <p aria-live="polite" className="mt-2 max-w-md text-xs text-[#687080]">{gmail.lastSyncError ?? syncStatus ?? (gmail.lastImportedAt ? `Last synced ${dateTime.format(gmail.lastImportedAt)}` : "Connected, not yet synced")}</p>
-      </div> : <Link href="/settings" className="rounded-xl bg-[#17181c] px-4 py-2.5 text-sm font-semibold text-white">Connect Gmail in Settings</Link>}
+      {gmail ? gmail.status === "CONNECTED"
+        ? <GmailSyncForm
+            accountId={gmail.id}
+            initialJob={gmailJob}
+            lastSuccessfulSyncAt={gmail.lastImportedAt?.toISOString() ?? null}
+            fallbackSummary={gmailSummary}
+            fallbackError={gmail.lastSyncError}
+          />
+        : <div className="text-right">
+            <Link className="rounded-xl border border-amber-300 px-4 py-2.5 text-sm font-semibold text-amber-800 dark:text-amber-300" href="/api/gmail/connect?reconnect=1">Reconnect Gmail</Link>
+            <p aria-live="polite" className="mt-2 max-w-md text-xs text-red-700 dark:text-red-300">{gmail.lastSyncError ?? "Reconnect Gmail to resume synchronization."}</p>
+          </div>
+        : <Link href="/settings" className="rounded-xl bg-[#17181c] px-4 py-2.5 text-sm font-semibold text-white">Connect Gmail in Settings</Link>}
     </header>
 
     <div className="inbox-shell mt-7 overflow-hidden rounded-2xl border border-black/[0.07] bg-white shadow-[0_8px_30px_rgba(23,24,28,0.035)] lg:grid lg:min-h-[680px] lg:grid-cols-[minmax(340px,420px)_minmax(0,1fr)]">

@@ -11,7 +11,12 @@ describe("Gmail token encryption", () => {
   });
   it("rejects corrupted authenticated ciphertext", () => {
     const encrypted = encryptToken("refresh-secret");
-    expect(() => decryptToken(`${encrypted.slice(0, -1)}x`)).toThrow();
+    const [version, iv, tag, ciphertext] = encrypted.split(".");
+    const corruptedCiphertext =
+      `${ciphertext[0] === "A" ? "B" : "A"}${ciphertext.slice(1)}`;
+    expect(() =>
+      decryptToken(`${version}.${iv}.${tag}.${corruptedCiphertext}`),
+    ).toThrow();
   });
   it("uses a unique IV", () => {
     expect(encryptToken("same")).not.toBe(encryptToken("same"));

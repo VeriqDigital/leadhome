@@ -4,7 +4,38 @@ import type { gmail_v1 } from "googleapis";
 import type { MessageProvider, NormalizedConversation, NormalizedMessage } from "./provider";
 import { createGmailClient } from "@/lib/gmail/gmail-client";
 
-const MAX_THREADS = Math.max(1, Math.min(Number(process.env.GMAIL_SYNC_THREAD_LIMIT ?? 50), 100));
+const MAX_GMAIL_REQUEST_MS = 10_000;
+const DEADLINE_CUSHION_MS = 1_000;
+
+export class GmailRequestDeadlineError extends Error {
+  readonly code = "ETIMEDOUT";
+
+  constructor() {
+    super("The Gmail request exceeded the job execution window.");
+    this.name = "GmailRequestDeadlineError";
+  }
+}
+
+export function gmailRequestTimeoutMs(
+  deadlineAt?: number,
+  now = Date.now(),
+) {
+  if (deadlineAt === undefined) return MAX_GMAIL_REQUEST_MS;
+  const remaining = deadlineAt - now - DEADLINE_CUSHION_MS;
+  if (remaining < 1_000) throw new GmailRequestDeadlineError();
+  return Math.min(MAX_GMAIL_REQUEST_MS, remaining);
+}
+
+export function boundedGmailThreadLimit(value: unknown) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0
+    ? Math.min(parsed, 100)
+    : 50;
+}
+
+const DEFAULT_MAX_THREADS = boundedGmailThreadLimit(
+  process.env.GMAIL_SYNC_THREAD_LIMIT,
+);
 const header = (message: gmail_v1.Schema$Message, name: string) =>
   message.payload?.headers?.find((item) => item.name?.toLowerCase() === name.toLowerCase())?.value ?? null;
 const addresses = (value: string | null) =>
@@ -31,7 +62,14 @@ function bodies(part?: gmail_v1.Schema$MessagePart): { text: string[]; html: str
 export class GmailProvider implements MessageProvider {
   readonly provider = "GMAIL" as const;
   private client?: Awaited<ReturnType<typeof createGmailClient>>;
-  constructor(private accountId: string, private ownerId: string) {}
+  constructor(
+    private accountId: string,
+    private ownerId: string,
+    private threadLimit = DEFAULT_MAX_THREADS,
+    private deadlineAt?: number,
+  ) {
+    this.threadLimit = boundedGmailThreadLimit(threadLimit);
+  }
   private async getClient() { return (this.client ??= await createGmailClient(this.accountId, this.ownerId)); }
   async getAccount() {
     const { account } = await this.getClient();
@@ -41,11 +79,11 @@ export class GmailProvider implements MessageProvider {
     const { gmail } = await this.getClient();
     const ids: string[] = [];
     let pageToken: string | undefined;
-    while (ids.length < MAX_THREADS) {
+    while (ids.length < this.threadLimit) {
       const response = await gmail.users.threads.list({
         userId: "me", q: "newer_than:30d in:inbox -in:spam -in:trash",
-        maxResults: Math.min(50, MAX_THREADS - ids.length), pageToken,
-      });
+        maxResults: Math.min(50, this.threadLimit - ids.length), pageToken,
+      }, { timeout: gmailRequestTimeoutMs(this.deadlineAt) });
       ids.push(...(response.data.threads ?? []).flatMap((thread) => thread.id ? [thread.id] : []));
       pageToken = response.data.nextPageToken ?? undefined;
       if (!pageToken) break;
@@ -59,7 +97,10 @@ export class GmailProvider implements MessageProvider {
   }
   async listMessages(providerConversationId: string): Promise<NormalizedMessage[]> {
     const { gmail, account } = await this.getClient();
-    const response = await gmail.users.threads.get({ userId: "me", id: providerConversationId, format: "full" });
+    const response = await gmail.users.threads.get(
+      { userId: "me", id: providerConversationId, format: "full" },
+      { timeout: gmailRequestTimeoutMs(this.deadlineAt) },
+    );
     return (response.data.messages ?? []).flatMap((message) => {
       if (!message.id) return [];
       const from = header(message, "From") ?? "";

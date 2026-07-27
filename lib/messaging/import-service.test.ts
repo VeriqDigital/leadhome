@@ -236,6 +236,38 @@ beforeEach(() => {
 });
 
 describe("provider import pipeline", () => {
+  it("reports bounded phase checkpoints without changing importer behavior", async () => {
+    const checkpoints: Array<{
+      phase: string;
+      processed: number;
+      total: number | null;
+    }> = [];
+    await importProviderAccount({
+      ownerId: "owner-a",
+      provider: new MutableProvider(),
+      options: {
+        onProgress(progress) {
+          checkpoints.push(progress);
+        },
+      },
+    });
+
+    expect(checkpoints.map((item) => item.phase)).toEqual([
+      "LISTING_THREADS",
+      "IMPORTING_THREADS",
+      "IMPORTING_THREADS",
+      "MATCHING",
+      "MATCHING",
+      "FINALIZING",
+    ]);
+    expect(checkpoints.at(-1)).toEqual({
+      phase: "FINALIZING",
+      processed: 1,
+      total: 1,
+      message: "Saving the Gmail sync summary.",
+    });
+  });
+
   it("creates an account, conversation, messages, and an accurate summary", async () => {
     const summary = await importProviderAccount({
       ownerId: "owner-a",

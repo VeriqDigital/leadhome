@@ -19,6 +19,22 @@ export type ImportSummary = {
   conversationsNeedingReview: number;
 };
 
+export type ImportProgress = {
+  phase:
+    | "LISTING_THREADS"
+    | "IMPORTING_THREADS"
+    | "MATCHING"
+    | "FINALIZING";
+  processed: number;
+  total: number | null;
+  message: string;
+};
+
+export type ImportOptions = {
+  onProgress?: (progress: ImportProgress) => Promise<void> | void;
+  persistAccountSummary?: boolean;
+};
+
 const emptySummary = (): ImportSummary => ({
   accountsProcessed: 1,
   conversationsCreated: 0,
@@ -66,16 +82,30 @@ function matchData(match: LeadMatchResult) {
 export async function importProviderAccount({
   ownerId,
   provider,
+  options,
 }: {
   ownerId: string;
   provider: MessageProvider;
+  options?: ImportOptions;
 }): Promise<ImportSummary> {
   const normalizedAccount = await provider.getAccount();
   if (normalizedAccount.provider !== provider.provider) {
     throw new Error("Provider account type does not match its adapter.");
   }
 
+  await options?.onProgress?.({
+    phase: "LISTING_THREADS",
+    processed: 0,
+    total: null,
+    message: "Listing recent Gmail threads.",
+  });
   const normalizedConversations = await provider.listRecentConversations();
+  await options?.onProgress?.({
+    phase: "IMPORTING_THREADS",
+    processed: 0,
+    total: normalizedConversations.length,
+    message: "Fetching recent Gmail threads.",
+  });
   const fetched: Array<{ conversation: NormalizedConversation; messages: NormalizedMessage[]; rawMessageCount: number }> = [];
   // Provider calls are deliberately bounded to avoid mailbox API quota spikes.
   for (let index = 0; index < normalizedConversations.length; index += 5) {
@@ -93,6 +123,12 @@ export async function importProviderAccount({
       };
     }));
     fetched.push(...batch);
+    await options?.onProgress?.({
+      phase: "IMPORTING_THREADS",
+      processed: Math.min(index + batch.length, normalizedConversations.length),
+      total: normalizedConversations.length,
+      message: "Fetching recent Gmail threads.",
+    });
   }
 
   const account = await prisma.communicationAccount.upsert({
@@ -117,7 +153,13 @@ export async function importProviderAccount({
   });
 
   const summary = emptySummary();
-  for (const item of fetched) {
+  await options?.onProgress?.({
+    phase: "MATCHING",
+    processed: 0,
+    total: fetched.length,
+    message: "Importing and matching conversations.",
+  });
+  for (const [index, item] of fetched.entries()) {
     await importConversation({
       ownerId,
       account: { id: account.id, address: account.address },
@@ -127,15 +169,29 @@ export async function importProviderAccount({
       rawMessageCount: item.rawMessageCount,
       summary,
     });
+    await options?.onProgress?.({
+      phase: "MATCHING",
+      processed: index + 1,
+      total: fetched.length,
+      message: "Importing and matching conversations.",
+    });
   }
 
-  await prisma.communicationAccount.update({
-    where: { id: account.id },
-    data: {
-      lastImportedAt: new Date(),
-      lastImportSummary: summary,
-    },
+  await options?.onProgress?.({
+    phase: "FINALIZING",
+    processed: fetched.length,
+    total: fetched.length,
+    message: "Saving the Gmail sync summary.",
   });
+  if (options?.persistAccountSummary !== false) {
+    await prisma.communicationAccount.update({
+      where: { id: account.id },
+      data: {
+        lastImportedAt: new Date(),
+        lastImportSummary: summary,
+      },
+    });
+  }
   return summary;
 }
 
