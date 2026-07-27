@@ -59,6 +59,38 @@ The Gmail payload contains only:
 Its result reuses the existing importer counts and adds conversations
 processed, a bounded error list, and ISO start/completion timestamps.
 
+### Gmail result semantics
+
+The persisted job result keeps the importer's stable field names. The Inbox
+and Settings UI map those fields into three user-facing groups: activity added
+by this check, review state among conversations processed by this check, and
+lower-level execution details.
+
+| Result field | Exact meaning |
+| --- | --- |
+| `accountsProcessed` | Communication accounts processed. A manual Gmail job currently handles one account. |
+| `conversationsProcessed` | Provider conversations handled by this run: `conversationsCreated + conversationsUpdated`. |
+| `conversationsCreated` | Gmail threads that created a new LeadHome conversation in this run. |
+| `conversationsUpdated` | Existing LeadHome conversations revisited in this run, whether or not their visible data changed. |
+| `messagesCreated` | Individual Gmail messages inserted for the first time in this run. |
+| `messagesSkipped` | Messages already present, plus duplicate provider message IDs within the fetched batch. |
+| `conversationsMatched` | Processed conversations for which matching found a lead. This can include a conversation already linked to that same lead; it is not a “newly linked” count. |
+| `conversationsNeedingReview` | Processed, unmatched conversations whose existing review state remains `NEEDS_REVIEW`. This is run-scoped, not an Inbox-wide total. |
+| `errors` | Bounded, safe item-level errors in an otherwise completed result. The current importer fails and retries a whole run on provider/import exceptions, so successful jobs normally store an empty list; the UI nevertheless handles a future partial-success result safely. |
+| `startedAt` / `completedAt` | ISO timestamps bounding job execution and used to derive the displayed duration. |
+
+A conversation means one email thread. A message means one individual email
+inside a thread, so one new conversation can legitimately contain multiple
+new messages. A successful no-op is a normal `COMPLETED` job and is presented
+as: “Gmail is up to date. No new conversations or messages were imported.”
+
+The richer Inbox card separates “Added this check” from run-scoped matching
+and review counts, and puts operational counters behind an accessible
+`View details` disclosure. Settings uses the same state language and button
+labels in a more compact form. Refreshing after completion uses the current
+route rather than navigating, preserving the selected conversation, search,
+filters, and URL state.
+
 ## Idempotency
 
 Only one active Gmail sync is permitted for the same owner and communication

@@ -16,6 +16,28 @@ export type SyncTone =
   | "warning"
   | "error";
 
+export type GmailSyncUserSummary = {
+  runActivity: {
+    newConversations: number;
+    newMessages: number;
+    updatedConversations: number;
+    skippedMessages: number;
+  };
+  reviewState: {
+    processedConversationsLinked: number;
+    processedConversationsNeedingReview: number;
+    scope: "PROCESSED_IN_THIS_RUN";
+  };
+  execution: {
+    accountsChecked: number;
+    conversationsChecked: number;
+    errorCount: number;
+    startedAt: string;
+    completedAt: string;
+    durationMs: number | null;
+  };
+};
+
 export type GmailSyncPresentation = {
   buttonLabel: string;
   heading: string;
@@ -25,12 +47,7 @@ export type GmailSyncPresentation = {
   canSubmit: boolean;
   reconnectRequired: boolean;
   percent: number | null;
-  summary: GmailSyncSummaryMetric[];
-};
-
-export type GmailSyncSummaryMetric = {
-  label: string;
-  value: number;
+  summary: GmailSyncUserSummary | null;
 };
 
 export const MAX_CONSECUTIVE_POLL_FAILURES = 3;
@@ -72,39 +89,54 @@ function safeCount(value: unknown) {
     : 0;
 }
 
+function durationMs(startedAt: string, completedAt: string) {
+  const started = new Date(startedAt).getTime();
+  const completed = new Date(completedAt).getTime();
+  if (!Number.isFinite(started) || !Number.isFinite(completed)) return null;
+  return Math.max(0, completed - started);
+}
+
+export function gmailSyncUserSummary(
+  result: GmailSyncJobView["result"] | null | undefined,
+): GmailSyncUserSummary | null {
+  if (!result) return null;
+  return {
+    runActivity: {
+      newConversations: safeCount(result.conversationsCreated),
+      newMessages: safeCount(result.messagesCreated),
+      updatedConversations: safeCount(result.conversationsUpdated),
+      skippedMessages: safeCount(result.messagesSkipped),
+    },
+    reviewState: {
+      processedConversationsLinked: safeCount(result.conversationsMatched),
+      processedConversationsNeedingReview: safeCount(
+        result.conversationsNeedingReview,
+      ),
+      scope: "PROCESSED_IN_THIS_RUN",
+    },
+    execution: {
+      accountsChecked: safeCount(result.accountsProcessed),
+      conversationsChecked: safeCount(result.conversationsProcessed),
+      errorCount: Array.isArray(result.errors) ? result.errors.length : 0,
+      startedAt: result.startedAt,
+      completedAt: result.completedAt,
+      durationMs: durationMs(result.startedAt, result.completedAt),
+    },
+  };
+}
+
 export function gmailImportSummaryMessage(
   result: GmailSyncJobView["result"] | LegacyImportSummary | null | undefined,
 ) {
   if (!result) {
     return "Gmail was checked, but the results are not available.";
   }
-  const conversationsCreated = safeCount(result?.conversationsCreated);
-  const messagesCreated = safeCount(result?.messagesCreated);
+  const conversationsCreated = safeCount(result.conversationsCreated);
+  const messagesCreated = safeCount(result.messagesCreated);
   if (conversationsCreated === 0 && messagesCreated === 0) {
-    return "We checked Gmail and did not find any new conversations or messages.";
+    return "Gmail is up to date. No new conversations or messages were imported.";
   }
-  return `We added ${conversationsCreated} new conversation${conversationsCreated === 1 ? "" : "s"} and ${messagesCreated} new message${messagesCreated === 1 ? "" : "s"} to your inbox.`;
-}
-
-export function gmailImportSummaryMetrics(
-  result: GmailSyncJobView["result"] | null | undefined,
-): GmailSyncSummaryMetric[] {
-  if (!result) return [];
-  return [
-    {
-      label: "New conversations",
-      value: safeCount(result.conversationsCreated),
-    },
-    { label: "New messages", value: safeCount(result.messagesCreated) },
-    {
-      label: "Linked to leads",
-      value: safeCount(result.conversationsMatched),
-    },
-    {
-      label: "Needs review",
-      value: safeCount(result.conversationsNeedingReview),
-    },
-  ];
+  return `Added ${conversationsCreated} new conversation${conversationsCreated === 1 ? "" : "s"} and ${messagesCreated} new message${messagesCreated === 1 ? "" : "s"} to your Inbox.`;
 }
 
 function hasNewGmailActivity(
@@ -122,17 +154,17 @@ function friendlyProgressMessage(
 ) {
   switch (phase) {
     case "CONNECTING":
-      return "Connecting to Gmail…";
+      return "Connecting securely to Gmail…";
     case "LISTING_THREADS":
       return "Looking for recent conversations…";
     case "IMPORTING_THREADS":
-      return "Bringing in recent messages…";
+      return "Importing recent emails…";
     case "MATCHING":
-      return "Linking conversations to your leads…";
+      return "Matching conversations to your leads…";
     case "FINALIZING":
-      return "Finishing up…";
+      return "Finishing your Gmail check…";
     default:
-      return "Checking for new Gmail activity…";
+      return "Looking for new Gmail activity…";
   }
 }
 
@@ -159,13 +191,13 @@ export function gmailSyncPresentation({
         : fallbackSummary
           ? fallbackHasActivity
             ? "New Gmail activity added"
-            : "Everything is up to date"
+            : "Gmail is up to date"
           : "Gmail is connected",
       message: fallbackError
         ? "We could not check Gmail right now. Please try again."
         : fallbackSummary
           ? gmailImportSummaryMessage(fallbackSummary)
-          : "Check Gmail whenever you want to bring new customer messages into LeadHome.",
+          : "Check Gmail to bring recent customer emails into LeadHome.",
       tone: fallbackError
         ? "error"
         : fallbackSummary
@@ -177,26 +209,26 @@ export function gmailSyncPresentation({
       canSubmit: true,
       reconnectRequired: false,
       percent: null,
-      summary: [],
+      summary: null,
     };
   }
 
   switch (job.status) {
     case "PENDING":
       return {
-        buttonLabel: "Waiting…",
-        heading: "Waiting to check Gmail",
-        message: "Your Gmail check will start shortly.",
+        buttonLabel: "Check queued",
+        heading: "Gmail check queued",
+        message: "Your check will begin shortly.",
         tone: "progress",
         active: true,
         canSubmit: false,
         reconnectRequired: false,
         percent: boundedPercent(job.progress?.percent),
-        summary: [],
+        summary: null,
       };
     case "RUNNING":
       return {
-        buttonLabel: "Checking…",
+        buttonLabel: "Checking Gmail…",
         heading: "Checking Gmail",
         message: friendlyProgressMessage(job.progress?.phase),
         tone: "progress",
@@ -204,43 +236,51 @@ export function gmailSyncPresentation({
         canSubmit: false,
         reconnectRequired: false,
         percent: boundedPercent(job.progress?.percent),
-        summary: [],
+        summary: null,
       };
     case "RETRY_SCHEDULED":
       return {
-        buttonLabel: "Trying again soon",
-        heading: "We will try again shortly",
+        buttonLabel: "Retry scheduled",
+        heading: "Gmail check will retry",
         message:
-          "Gmail is temporarily unavailable. You do not need to do anything.",
+          "Gmail is temporarily unavailable. LeadHome will try again automatically.",
         tone: "warning",
         active: true,
         canSubmit: false,
         reconnectRequired: false,
         percent: boundedPercent(job.progress?.percent),
-        summary: [],
+        summary: null,
       };
     case "COMPLETED": {
+      const summary = gmailSyncUserSummary(job.result);
       const hasNewActivity = hasNewGmailActivity(job.result);
+      const hasPartialErrors = Boolean(summary?.execution.errorCount);
       return {
         buttonLabel: "Check Gmail",
-        heading: job.result
+        heading: hasPartialErrors
+          ? "Gmail check completed with some issues"
+          : job.result
+            ? hasNewActivity
+              ? "New Gmail activity added"
+              : "Gmail is up to date"
+            : "Gmail check finished",
+        message: hasPartialErrors
           ? hasNewActivity
-            ? "New Gmail activity added"
-            : "Everything is up to date"
-          : "Gmail check finished",
-        message: gmailImportSummaryMessage(job.result),
-        tone: job.result
-          ? hasNewActivity
-            ? "success"
-            : "noChanges"
-          : "warning",
+            ? `${gmailImportSummaryMessage(job.result)} Some items could not be checked; try again to finish.`
+            : "Some Gmail items could not be checked. Try again to finish the check."
+          : gmailImportSummaryMessage(job.result),
+        tone: hasPartialErrors
+          ? "warning"
+          : job.result
+            ? hasNewActivity
+              ? "success"
+              : "noChanges"
+            : "warning",
         active: false,
         canSubmit: true,
         reconnectRequired: false,
         percent: 100,
-        summary: hasNewActivity
-          ? gmailImportSummaryMetrics(job.result)
-          : [],
+        summary,
       };
     }
     case "FAILED": {
@@ -251,39 +291,39 @@ export function gmailSyncPresentation({
           ? "Gmail needs to be reconnected"
           : "We could not check Gmail",
         message: reconnectRequired
-          ? "Reconnect Gmail to continue bringing customer messages into LeadHome."
+          ? "Reconnect Gmail to continue importing customer emails."
           : "Something went wrong while checking Gmail. Please try again.",
         tone: "error",
         active: false,
         canSubmit: !reconnectRequired,
         reconnectRequired,
         percent: null,
-        summary: [],
+        summary: null,
       };
     }
     case "CANCELLED":
       return {
         buttonLabel: "Check Gmail",
         heading: "Gmail check cancelled",
-        message: "No changes were made.",
+        message: "No Gmail changes were imported.",
         tone: "neutral",
         active: false,
         canSubmit: true,
         reconnectRequired: false,
         percent: null,
-        summary: [],
+        summary: null,
       };
     default:
       return {
         buttonLabel: "Check Gmail",
         heading: "Gmail is connected",
-        message: "Check Gmail to bring new customer messages into LeadHome.",
+        message: "Check Gmail to bring recent customer emails into LeadHome.",
         tone: "neutral",
         active: false,
         canSubmit: true,
         reconnectRequired: false,
         percent: null,
-        summary: [],
+        summary: null,
       };
   }
 }

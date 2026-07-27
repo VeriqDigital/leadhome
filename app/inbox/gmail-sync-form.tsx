@@ -28,25 +28,37 @@ const initialActionState: GmailSyncActionState = {
   message: "",
 };
 
-const toneClasses: Record<SyncTone, string> = {
-  neutral:
-    "border-black/10 bg-black/[0.025] text-[#687080] dark:border-white/10 dark:bg-white/[0.04]",
-  progress:
-    "border-blue-200 bg-blue-50 text-blue-800 dark:border-blue-400/25 dark:bg-blue-400/10 dark:text-blue-200",
-  success:
-    "border-emerald-200 bg-emerald-50 text-emerald-800 dark:border-emerald-400/25 dark:bg-emerald-400/10 dark:text-emerald-200",
-  noChanges:
-    "border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-400/25 dark:bg-sky-400/10 dark:text-sky-200",
-  warning:
-    "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-200",
-  error:
-    "border-red-200 bg-red-50 text-red-800 dark:border-red-400/25 dark:bg-red-400/10 dark:text-red-200",
+const toneAccentClasses: Record<SyncTone, string> = {
+  neutral: "text-[#687080] dark:text-[#a7afbe]",
+  progress: "text-blue-700 dark:text-blue-300",
+  success: "text-emerald-700 dark:text-emerald-300",
+  noChanges: "text-sky-700 dark:text-sky-300",
+  warning: "text-amber-700 dark:text-amber-300",
+  error: "text-red-700 dark:text-red-300",
+};
+
+const toneBorderClasses: Record<SyncTone, string> = {
+  neutral: "border-l-[#a7afbe]",
+  progress: "border-l-blue-500",
+  success: "border-l-emerald-500",
+  noChanges: "border-l-sky-500",
+  warning: "border-l-amber-500",
+  error: "border-l-red-500",
 };
 
 function formatDate(value: string | null | undefined) {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : dateTime.format(date);
+}
+
+function formatDuration(value: number | null) {
+  if (value === null) return "Unavailable";
+  if (value < 1_000) return "Less than a second";
+  const seconds = Math.round(value / 1_000);
+  if (seconds < 60) return `${seconds} second${seconds === 1 ? "" : "s"}`;
+  const minutes = Math.round(seconds / 60);
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
 
 export function GmailSyncForm({
@@ -206,46 +218,159 @@ export function GmailSyncForm({
             } cursor-pointer text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60`}
           >
             {pending
-              ? "Starting…"
-              : pollingError
-                ? "Check status"
-                : presentation.buttonLabel}
+              ? "Check queued"
+              : presentation.buttonLabel}
           </button>
         </form>}
 
     <div
-      aria-live={liveError ? "assertive" : "polite"}
-      role={liveError ? "alert" : "status"}
-      className={`mt-2 rounded-xl border px-3 py-2.5 ${variant === "inbox" ? "ml-auto max-w-md text-left" : ""} text-xs ${toneClasses[displayedTone]}`}
+      className={`mt-2 rounded-xl border border-l-4 border-black/10 bg-black/[0.025] px-3 py-2.5 text-[#20242c] dark:border-white/10 dark:bg-white/[0.04] dark:text-[#eef1f7] ${toneBorderClasses[displayedTone]} ${variant === "inbox" ? "ml-auto max-w-md text-left" : ""} text-xs`}
     >
-      <div className="flex items-start gap-2">
+      <div
+        aria-live={liveError ? "assertive" : "polite"}
+        role={liveError ? "alert" : "status"}
+        className="flex items-start gap-2"
+      >
         <span
           aria-hidden="true"
-          className="mt-1 size-2 shrink-0 rounded-full bg-current"
+          className={`mt-1 size-2 shrink-0 rounded-full bg-current ${toneAccentClasses[displayedTone]}`}
         />
         <div>
-          <p className="font-semibold">
+          <p className={`font-semibold ${toneAccentClasses[displayedTone]}`}>
             {actionError
               ? "We could not start the Gmail check"
               : pollingError
                 ? "Gmail status is unavailable"
                 : presentation.heading}
           </p>
-          <p className="mt-1 opacity-80">
+          <p className="mt-1 text-[#687080] dark:text-[#a7afbe]">
             {displayedMessage}
           </p>
         </div>
       </div>
-      {presentation.summary.length > 0 && (
-        <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-left">
-          {presentation.summary.map((metric) => (
-            <div key={metric.label}>
-              <dt className="opacity-70">{metric.label}</dt>
-              <dd className="font-semibold text-current">{metric.value}</dd>
-            </div>
-          ))}
-        </dl>
+      {variant === "inbox" && presentation.summary && (
+        <div className="mt-3 space-y-3 border-t border-black/10 pt-3 dark:border-white/10">
+          {(presentation.summary.runActivity.newConversations > 0 ||
+            presentation.summary.runActivity.newMessages > 0) && (
+            <section aria-labelledby={`gmail-added-${job?.id ?? "latest"}`}>
+              <p
+                id={`gmail-added-${job?.id ?? "latest"}`}
+                className="font-semibold"
+              >
+                Added this check
+              </p>
+              <dl className="mt-2 grid grid-cols-2 gap-3">
+                <div>
+                  <dd className="text-base font-semibold">
+                    {presentation.summary.runActivity.newConversations}
+                  </dd>
+                  <dt className="text-[#687080] dark:text-[#a7afbe]">
+                    New conversations
+                  </dt>
+                </div>
+                <div>
+                  <dd className="text-base font-semibold">
+                    {presentation.summary.runActivity.newMessages}
+                  </dd>
+                  <dt className="text-[#687080] dark:text-[#a7afbe]">
+                    New individual emails
+                  </dt>
+                </div>
+              </dl>
+              <p className="mt-2 text-[#687080] dark:text-[#a7afbe]">
+                A conversation is an email thread and may contain multiple
+                individual emails.
+              </p>
+            </section>
+          )}
+
+          {(presentation.summary.reviewState.processedConversationsLinked > 0 ||
+            presentation.summary.reviewState.processedConversationsNeedingReview > 0) && (
+            <section aria-labelledby={`gmail-review-${job?.id ?? "latest"}`}>
+              <p
+                id={`gmail-review-${job?.id ?? "latest"}`}
+                className="font-semibold"
+              >
+                Among conversations checked
+              </p>
+              <dl className="mt-2 grid grid-cols-2 gap-3">
+                <div>
+                  <dd className="text-base font-semibold">
+                    {presentation.summary.reviewState.processedConversationsLinked}
+                  </dd>
+                  <dt className="text-[#687080] dark:text-[#a7afbe]">
+                    Matched to a lead
+                  </dt>
+                </div>
+                <div>
+                  <dd className="text-base font-semibold">
+                    {presentation.summary.reviewState.processedConversationsNeedingReview}
+                  </dd>
+                  <dt className="text-[#687080] dark:text-[#a7afbe]">
+                    Need review
+                  </dt>
+                </div>
+              </dl>
+              <p className="mt-2 text-[#687080] dark:text-[#a7afbe]">
+                These counts cover this check only. Matches can include
+                conversations that were already linked to the same lead.
+              </p>
+            </section>
+          )}
+
+          <details className="group border-t border-black/10 pt-2 dark:border-white/10">
+            <summary className="cursor-pointer font-semibold text-[#4f596b] marker:text-[#687080] hover:text-[#20242c] focus-visible:outline-2 focus-visible:outline-offset-2 dark:text-[#bdc5d3] dark:hover:text-white">
+              View details
+            </summary>
+            <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-2 text-[#687080] dark:text-[#a7afbe]">
+              <div>
+                <dt>Accounts checked</dt>
+                <dd className="font-semibold text-[#20242c] dark:text-[#eef1f7]">
+                  {presentation.summary.execution.accountsChecked}
+                </dd>
+              </div>
+              <div>
+                <dt>Conversations checked</dt>
+                <dd className="font-semibold text-[#20242c] dark:text-[#eef1f7]">
+                  {presentation.summary.execution.conversationsChecked}
+                </dd>
+              </div>
+              <div>
+                <dt>Existing conversations checked</dt>
+                <dd className="font-semibold text-[#20242c] dark:text-[#eef1f7]">
+                  {presentation.summary.runActivity.updatedConversations}
+                </dd>
+              </div>
+              <div>
+                <dt>Emails already imported</dt>
+                <dd className="font-semibold text-[#20242c] dark:text-[#eef1f7]">
+                  {presentation.summary.runActivity.skippedMessages}
+                </dd>
+              </div>
+              <div>
+                <dt>Import issues</dt>
+                <dd className="font-semibold text-[#20242c] dark:text-[#eef1f7]">
+                  {presentation.summary.execution.errorCount}
+                </dd>
+              </div>
+              <div>
+                <dt>Duration</dt>
+                <dd className="font-semibold text-[#20242c] dark:text-[#eef1f7]">
+                  {formatDuration(presentation.summary.execution.durationMs)}
+                </dd>
+              </div>
+            </dl>
+          </details>
+        </div>
       )}
+      {variant === "settings" &&
+        presentation.summary &&
+        presentation.summary.reviewState.processedConversationsNeedingReview > 0 && (
+          <p className="mt-2 font-medium text-amber-700 dark:text-amber-300">
+            {presentation.summary.reviewState.processedConversationsNeedingReview}
+            {" "}checked conversation{presentation.summary.reviewState.processedConversationsNeedingReview === 1 ? "" : "s"} need review.
+          </p>
+        )}
       {presentation.active && presentation.percent !== null && (
         <div className="mt-2">
           <div
