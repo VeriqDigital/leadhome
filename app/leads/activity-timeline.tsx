@@ -8,12 +8,17 @@ import {
   ContactRound,
   Globe2,
   ListChecks,
+  RotateCcw,
   Link2,
   Link2Off,
   Mail,
   Send,
   UserRoundPlus,
   Waypoints,
+  CheckCircle2,
+  CircleX,
+  Trash2,
+  ClipboardPlus,
 } from "lucide-react";
 import {
   formatCurrency,
@@ -41,6 +46,12 @@ const icons: Record<string, LucideIcon> = {
   MESSAGE_SENT: Send,
   CONVERSATION_LINKED: Link2,
   CONVERSATION_UNLINKED: Link2Off,
+  TASK_CREATED: ClipboardPlus,
+  TASK_UPDATED: ClipboardPenLine,
+  TASK_COMPLETED: CheckCircle2,
+  TASK_REOPENED: RotateCcw,
+  TASK_CANCELLED: CircleX,
+  TASK_DELETED: Trash2,
 };
 
 export type TimelineActivity = {

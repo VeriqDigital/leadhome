@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import {
-  BellRing,
   ChevronDown,
   Gauge,
   Home,
@@ -28,7 +27,6 @@ const items = [
   { label: "Inbox", href: "/inbox", icon: Inbox },
   { label: "Pipeline", href: "/pipeline", icon: SlidersHorizontal },
   { label: "Tasks", href: "/tasks", icon: SquareCheckBig },
-  { label: "Reminders", href: "/reminders", icon: BellRing },
   { label: "Settings", href: "/settings", icon: Settings },
 ] as const;
 

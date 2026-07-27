@@ -120,6 +120,15 @@ export async function getConversationDetail(ownerId: string, conversationId: str
       matchCandidateLeadIds: true, manuallyDetached: true,
       lead: { select: { id: true, name: true, email: true } },
       account: { select: { displayName: true, address: true } },
+      tasks: {
+        where: { status: "OPEN" },
+        orderBy: [
+          { dueAt: { sort: "asc", nulls: "last" } },
+          { id: "asc" },
+        ],
+        take: 5,
+        select: { id: true, title: true, dueAt: true },
+      },
       messages: {
         orderBy: [{ receivedAt: "asc" }, { id: "asc" }],
         select: {

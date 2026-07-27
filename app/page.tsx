@@ -1,6 +1,6 @@
 import Link from "next/link";
 import {
-  BellRing,
+  CalendarClock,
   CircleDollarSign,
   TrendingUp,
   UserRoundPlus,
@@ -21,13 +21,11 @@ import {
   Header,
   MetricCard,
   PipelineRow,
-  ReminderItem,
   SmallAction,
-  TaskRow,
-  ViewAll,
 } from "./components";
-import { demoReminders, demoTasks } from "./demo-fixtures";
 import { RecentLeads, type RecentLead } from "./recent-leads";
+import { completeTaskAction } from "./actions/task-actions";
+import { TaskDue } from "./tasks/task-due";
 
 const colors: Record<LeadStatus, string> = {
   NEW: "#8c83d9",
@@ -43,7 +41,18 @@ export default async function Home() {
   const startOfWeek = new Date();
   startOfWeek.setHours(0, 0, 0, 0);
   startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
-  const [recent, newCount, followUpCount, wonThisWeek, pipelineValue, grouped] =
+  const now = new Date();
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const endOfToday = new Date(startOfToday);
+  endOfToday.setDate(endOfToday.getDate() + 1);
+  const taskSelect = {
+    id: true,
+    title: true,
+    dueAt: true,
+    lead: { select: { id: true, name: true } },
+  } as const;
+  const [recent, newCount, followUpCount, wonThisWeek, pipelineValue, grouped, overdueTasks, todayTasks, upcomingTasks] =
     await Promise.all([
       prisma.lead.findMany({
         where: { userId: user.id },
@@ -51,7 +60,12 @@ export default async function Home() {
         take: 10,
       }),
       prisma.lead.count({ where: { userId: user.id, status: "NEW" } }),
-      prisma.lead.count({ where: { userId: user.id, status: "FOLLOW_UP" } }),
+      prisma.lead.count({
+        where: {
+          userId: user.id,
+          nextFollowUpDate: { lt: endOfToday },
+        },
+      }),
       prisma.lead.count({
         where: {
           userId: user.id,
@@ -67,6 +81,28 @@ export default async function Home() {
         by: ["status"],
         where: { userId: user.id },
         _count: true,
+      }),
+      prisma.task.findMany({
+        where: { ownerId: user.id, status: "OPEN", dueAt: { lt: startOfToday } },
+        orderBy: [{ dueAt: "asc" }, { id: "asc" }],
+        take: 5,
+        select: taskSelect,
+      }),
+      prisma.task.findMany({
+        where: {
+          ownerId: user.id,
+          status: "OPEN",
+          dueAt: { gte: startOfToday, lt: endOfToday },
+        },
+        orderBy: [{ dueAt: "asc" }, { id: "asc" }],
+        take: 5,
+        select: taskSelect,
+      }),
+      prisma.task.findMany({
+        where: { ownerId: user.id, status: "OPEN", dueAt: { gte: endOfToday } },
+        orderBy: [{ dueAt: "asc" }, { id: "asc" }],
+        take: 5,
+        select: taskSelect,
       }),
     ]);
   const counts = Object.fromEntries(
@@ -87,7 +123,7 @@ export default async function Home() {
       value: String(followUpCount),
       trend: "Live",
       period: "requiring attention",
-      icon: BellRing,
+      icon: CalendarClock,
       tone: "neutral",
     },
     {
@@ -165,12 +201,11 @@ export default async function Home() {
               </div>
             )}
           </DashboardCard>
-          <DashboardCard title="Reminders" action={<ViewAll />}>
-            <div className="flex gap-6 px-6 py-5 max-md:flex-col">
-              {demoReminders.map((reminder) => (
-                <ReminderItem key={reminder.name} {...reminder} />
-              ))}
-            </div>
+          <DashboardCard
+            title="Due Today"
+            action={<Link href="/tasks?view=today" className="text-xs text-[#606775]">View all</Link>}
+          >
+            <DashboardTasks tasks={todayTasks} now={now} empty="No tasks due today." />
           </DashboardCard>
         </div>
         <div className="grid gap-5">
@@ -187,15 +222,68 @@ export default async function Home() {
               ))}
             </ul>
           </DashboardCard>
-          <DashboardCard title="Upcoming Tasks" action={<ViewAll />}>
-            <ul className="px-6">
-              {demoTasks.map((task) => (
-                <TaskRow key={task.title} {...task} />
-              ))}
-            </ul>
+          <DashboardCard
+            title="Overdue Tasks"
+            action={<Link href="/tasks?view=overdue" className="text-xs text-[#606775]">View all</Link>}
+          >
+            <DashboardTasks tasks={overdueTasks} now={now} empty="No overdue tasks." />
+          </DashboardCard>
+          <DashboardCard
+            title="Upcoming Tasks"
+            action={<Link href="/tasks?view=upcoming" className="text-xs text-[#606775]">View all</Link>}
+          >
+            <DashboardTasks tasks={upcomingTasks} now={now} empty="No upcoming tasks." />
           </DashboardCard>
         </div>
       </div>
     </div>
+  );
+}
+
+function DashboardTasks({
+  tasks,
+  now,
+  empty,
+}: {
+  tasks: {
+    id: string;
+    title: string;
+    dueAt: Date | null;
+    lead: { id: string; name: string } | null;
+  }[];
+  now: Date;
+  empty: string;
+}) {
+  if (!tasks.length) {
+    return <p className="px-6 py-8 text-center text-sm text-[#687080]">{empty}</p>;
+  }
+  return (
+    <ul className="divide-y divide-black/[0.07] px-6">
+      {tasks.map((task) => (
+        <li key={task.id} className="flex min-h-18 items-center gap-3 py-3">
+          <div className="min-w-0">
+            <Link href={`/tasks/${task.id}/edit`} className="block truncate text-[13px] font-semibold hover:underline">
+              {task.title}
+            </Link>
+            <p className="mt-1 truncate text-xs text-[#687080]">
+              {task.lead?.name ?? "Standalone task"}
+            </p>
+          </div>
+          <span className="ml-auto shrink-0 text-xs">
+            <TaskDue
+              dueAt={task.dueAt?.toISOString() ?? null}
+              overdue={Boolean(task.dueAt && task.dueAt < now)}
+            />
+          </span>
+          <form action={completeTaskAction}>
+            <input type="hidden" name="taskId" value={task.id} />
+            <button
+              aria-label={`Complete ${task.title}`}
+              className="size-5 cursor-pointer rounded-[5px] border border-[#b9bdc4] hover:bg-[#edf6ee]"
+            />
+          </form>
+        </li>
+      ))}
+    </ul>
   );
 }

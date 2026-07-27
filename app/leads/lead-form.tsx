@@ -57,10 +57,12 @@ export function LeadForm({
   action,
   lead,
   submitLabel,
+  extraFields,
 }: {
   action: (state: ActionState, data: FormData) => Promise<ActionState>;
   lead?: LeadFormInput;
   submitLabel: string;
+  extraFields?: React.ReactNode;
 }) {
   const [fields, setFields] = useState<LeadFormValues>(() =>
     canonicalFormValues(lead),
@@ -144,13 +146,22 @@ export function LeadForm({
           onChange={(value) => update("estimatedValue", value)}
           error={state.errors?.estimatedValue?.[0]}
         />
-        <Field
-          name="nextFollowUp"
-          label="Next follow-up"
-          type="date"
-          value={fields.nextFollowUp}
-          onChange={(value) => update("nextFollowUp", value)}
-        />
+        <label className="block">
+          <span className="mb-2 block text-sm font-semibold">
+            Next follow-up
+          </span>
+          <input
+            type="date"
+            name="nextFollowUp"
+            value={fields.nextFollowUp}
+            readOnly
+            aria-describedby="next-follow-up-help"
+            className="h-11 w-full rounded-xl border border-black/9 bg-black/[0.025] px-3.5 text-sm text-[#687080]"
+          />
+          <span id="next-follow-up-help" className="mt-1 block text-xs text-[#687080]">
+            Managed by the earliest open follow-up task.
+          </span>
+        </label>
       </div>
       <label className="block">
         <span className="mb-2 block text-sm font-semibold">
@@ -164,6 +175,7 @@ export function LeadForm({
           className="w-full resize-y rounded-xl border border-black/9 bg-transparent px-3.5 py-3 text-sm outline-none focus:border-[#7770c8]"
         />
       </label>
+      {extraFields}
       <SaveResultMessage state={state} />
       <button
         type="submit"

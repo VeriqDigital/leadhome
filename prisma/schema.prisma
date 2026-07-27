@@ -21,6 +21,7 @@ model User {
   communicationAccounts CommunicationAccount[]
   conversations         Conversation[]
   messages              Message[]
+  tasks                 Task[]
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
 }
@@ -93,6 +94,7 @@ model Lead {
   inboundSubmissions InboundSubmission[]
   activities         LeadActivity[]
   conversations      Conversation[]
+  tasks              Task[]
   name               String
   email              String?
   phone              String?
@@ -204,6 +206,7 @@ model Conversation {
   baselineImportedAt     DateTime?
   messages               Message[]
   activities             LeadActivity[]
+  tasks                  Task[]
   createdAt              DateTime                   @default(now())
   updatedAt              DateTime                   @updatedAt
 
@@ -248,6 +251,30 @@ model Message {
   @@index([ownerId, externalSubmissionId])
 }
 
+model Task {
+  id             String        @id @default(cuid())
+  ownerId        String
+  owner          User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  leadId         String?
+  lead           Lead?         @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  title          String
+  description    String?
+  type           TaskType      @default(GENERAL)
+  priority       TaskPriority  @default(NORMAL)
+  status         TaskStatus    @default(OPEN)
+  dueAt          DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([ownerId, status, dueAt, id])
+  @@index([ownerId, type, dueAt])
+  @@index([leadId, status, dueAt])
+  @@index([conversationId, status, dueAt])
+}
+
 enum LeadSource {
   MANUAL
   WEBSITE
@@ -280,6 +307,12 @@ enum LeadActivityType {
   MESSAGE_SENT
   CONVERSATION_LINKED
   CONVERSATION_UNLINKED
+  TASK_CREATED
+  TASK_UPDATED
+  TASK_COMPLETED
+  TASK_REOPENED
+  TASK_CANCELLED
+  TASK_DELETED
 }
 
 enum MessageProvider {
@@ -331,4 +364,25 @@ enum CommunicationAccountStatus {
   CONNECTED
   RECONNECT_REQUIRED
   DISCONNECTED
+}
+
+enum TaskType {
+  GENERAL
+  CALL
+  EMAIL
+  MEETING
+  FOLLOW_UP
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum TaskStatus {
+  OPEN
+  COMPLETED
+  CANCELLED
 }

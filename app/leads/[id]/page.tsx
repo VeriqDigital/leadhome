@@ -6,9 +6,13 @@ import { requireUser } from "@/lib/auth-user";
 import { getLeadActivitiesForUser } from "@/lib/lead-activities";
 import { formatDate } from "@/lib/lead-format";
 import { deleteLeadAction, updateLeadAction } from "../../actions/lead-actions";
+import { createTaskAction } from "../../actions/task-actions";
 import { ActivityTimeline } from "../activity-timeline";
 import { DeleteLeadButton } from "../delete-lead-button";
 import { LeadForm } from "../lead-form";
+import { TaskForm } from "../../tasks/task-form";
+import { TaskDue } from "../../tasks/task-due";
+import { isOverdue } from "@/lib/tasks/task-service";
 export default async function LeadDetailPage({
   params,
 }: {
@@ -18,10 +22,31 @@ export default async function LeadDetailPage({
   const { id } = await params;
   const lead = await prisma.lead.findFirst({ where: { id, userId: user.id } });
   if (!lead) notFound();
-  const activities = await getLeadActivitiesForUser({
-    leadId: lead.id,
-    userId: user.id,
-  });
+  const [activities, tasks, conversations] = await Promise.all([
+    getLeadActivitiesForUser({ leadId: lead.id, userId: user.id }),
+    prisma.task.findMany({
+      where: { ownerId: user.id, leadId: lead.id, status: { not: "CANCELLED" } },
+      orderBy: [
+        { status: "asc" },
+        { dueAt: { sort: "asc", nulls: "last" } },
+        { id: "asc" },
+      ],
+      take: 8,
+      select: {
+        id: true,
+        title: true,
+        type: true,
+        status: true,
+        dueAt: true,
+      },
+    }),
+    prisma.conversation.findMany({
+      where: { ownerId: user.id, leadId: lead.id },
+      orderBy: [{ lastMessageAt: { sort: "desc", nulls: "last" } }],
+      take: 100,
+      select: { id: true, subject: true },
+    }),
+  ]);
   const update = updateLeadAction.bind(null, lead.id);
   const remove = deleteLeadAction.bind(null, lead.id);
   return (
@@ -56,6 +81,58 @@ export default async function LeadDetailPage({
                 lead.nextFollowUpDate?.toISOString().slice(0, 10) ?? null,
             }}
           />
+          <section className="mt-10 border-t border-black/[0.07] pt-8">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold">Tasks</h2>
+                <p className="mt-1 text-sm text-[#687080]">
+                  Open work and recent completed actions for this lead.
+                </p>
+              </div>
+              <Link
+                href={`/tasks?lead=${lead.id}`}
+                className="text-sm font-semibold underline"
+              >
+                View all
+              </Link>
+            </div>
+            {tasks.length ? (
+              <ul className="mt-5 divide-y divide-black/[0.07]">
+                {tasks.map((task) => (
+                  <li key={task.id} className="flex items-center gap-3 py-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{task.title}</p>
+                      <p className="mt-1 text-xs text-[#687080]">
+                        {task.type.toLowerCase().replaceAll("_", " ")} · {task.status.toLowerCase()}
+                      </p>
+                    </div>
+                    <span className="ml-auto text-xs">
+                      <TaskDue
+                        dueAt={task.dueAt?.toISOString() ?? null}
+                        overdue={isOverdue(task)}
+                      />
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-5 text-sm text-[#687080]">No tasks for this lead.</p>
+            )}
+            <details className="mt-6 rounded-xl border border-black/10 p-4">
+              <summary className="cursor-pointer text-sm font-semibold">
+                Add follow-up
+              </summary>
+              <div className="mt-5">
+                <TaskForm
+                  key={lead.id}
+                  action={createTaskAction}
+                  leads={[{ id: lead.id, name: lead.name }]}
+                  conversations={conversations}
+                  initial={{ leadId: lead.id, type: "FOLLOW_UP" }}
+                />
+              </div>
+            </details>
+          </section>
         </section>
         <ActivityTimeline activities={activities} />
       </div>

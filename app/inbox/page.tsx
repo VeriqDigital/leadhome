@@ -12,6 +12,8 @@ import {
 } from "@/lib/messaging/inbox-query";
 import { GmailSyncForm } from "./gmail-sync-form";
 import { ConversationControls } from "./conversation-controls";
+import { completeTaskAction } from "@/app/actions/task-actions";
+import { TaskDue } from "@/app/tasks/task-due";
 
 const reviews = ["NEEDS_REVIEW", "MATCHED", "IGNORED", "RESOLVED"] as const;
 const classifications = ["UNKNOWN", "LEAD", "CUSTOMER", "NEWSLETTER", "SPAM", "INTERNAL", "SYSTEM"] as const;
@@ -161,6 +163,54 @@ function ConversationDetail({ detail, leads, backHref }: { detail: Awaited<Retur
         reviewState={detail.reviewState}
         status={detail.status}
       />
+      <div className="mt-5 rounded-xl border border-black/[0.08] p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold">Open tasks</h3>
+          <div className="flex gap-3 text-xs font-semibold">
+            {!detail.lead && (
+              <Link
+                href={`/inbox/${detail.id}/create-lead`}
+                className="underline"
+              >
+                Create lead
+              </Link>
+            )}
+            <Link
+              href={`/tasks/new?conversation=${detail.id}&lead=${detail.lead?.id ?? ""}&type=FOLLOW_UP&title=${encodeURIComponent(`Follow up: ${detail.subject ?? "No subject"}`)}`}
+              className="underline"
+            >
+              Create task
+            </Link>
+          </div>
+        </div>
+        {detail.tasks.length ? (
+          <ul className="mt-3 divide-y divide-black/[0.07]">
+            {detail.tasks.map((task) => (
+              <li key={task.id} className="flex items-center gap-3 py-2.5">
+                <Link
+                  href={`/tasks/${task.id}/edit`}
+                  className="min-w-0 flex-1 truncate text-xs font-semibold hover:underline"
+                >
+                  {task.title}
+                </Link>
+                <span className="text-[11px]">
+                  <TaskDue dueAt={task.dueAt?.toISOString() ?? null} overdue={Boolean(task.dueAt && task.dueAt < new Date())} />
+                </span>
+                <form action={completeTaskAction}>
+                  <input type="hidden" name="taskId" value={task.id} />
+                  <button className="cursor-pointer rounded-lg border border-black/10 px-2.5 py-1.5 text-[11px] font-semibold">
+                    Complete
+                  </button>
+                </form>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 text-xs text-[#687080]">
+            No open tasks for this conversation.
+          </p>
+        )}
+      </div>
     </header>
     <div className="space-y-4 p-5 sm:p-6">{detail.messages.map((message) => {
       const text = message.bodyText?.trim() || (message.bodyHtml ? htmlToPlainText(message.bodyHtml) : "") || "No message body.";
