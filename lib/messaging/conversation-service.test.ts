@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   messageCreate: vi.fn(),
   messageFind: vi.fn(),
   leadFind: vi.fn(),
+  leadUpdate: vi.fn(),
   activityCreate: vi.fn(),
   transaction: vi.fn(),
 }));
@@ -48,6 +49,7 @@ beforeEach(() => {
   );
   mocks.messageCreate.mockResolvedValue({ id: "message-a" });
   mocks.leadFind.mockResolvedValue({ id: leadId });
+  mocks.leadUpdate.mockResolvedValue({ id: leadId });
   mocks.activityCreate.mockResolvedValue({ id: "activity-a" });
   mocks.transaction.mockImplementation((operation) =>
     operation({
@@ -56,7 +58,7 @@ beforeEach(() => {
         update: mocks.conversationUpdate,
       },
       message: { create: mocks.messageCreate },
-      lead: { findFirst: mocks.leadFind },
+      lead: { findFirst: mocks.leadFind, update: mocks.leadUpdate },
       leadActivity: { create: mocks.activityCreate },
     }),
   );
@@ -199,6 +201,10 @@ describe("conversation service", () => {
       }),
     });
     expect(mocks.activityCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.leadUpdate).toHaveBeenCalledWith({
+      where: { id: leadId },
+      data: { updatedAt: expect.any(Date) },
+    });
   });
 
   it("detaches an owned conversation and records the prior lead", async () => {

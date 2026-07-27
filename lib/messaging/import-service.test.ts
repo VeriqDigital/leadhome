@@ -79,12 +79,15 @@ const database = {
     updateMany: vi.fn(async ({ where, data }: any) => {
       const entry = [...state.conversations.entries()].find(([, conversation]) =>
         conversation.id === where.id &&
-        conversation.ownerId === where.ownerId &&
+        (where.ownerId === undefined || conversation.ownerId === where.ownerId) &&
         (where.leadId === undefined || conversation.leadId === where.leadId) &&
         (where.manuallyDetached === undefined ||
           conversation.manuallyDetached === where.manuallyDetached) &&
         (where.reviewState === undefined ||
-          conversation.reviewState === where.reviewState),
+          conversation.reviewState === where.reviewState) &&
+        (where.OR === undefined ||
+          conversation.lastMessageAt === null ||
+          conversation.lastMessageAt < where.OR[1].lastMessageAt.lt),
       );
       if (!entry) return { count: 0 };
       state.conversations.set(entry[0], { ...entry[1], ...data });
@@ -142,6 +145,9 @@ const database = {
       state.activities.push(data);
       return { id: `activity-${state.activities.length}` };
     }),
+  },
+  lead: {
+    update: vi.fn(async ({ where, data }: any) => ({ ...where, ...data })),
   },
 };
 
@@ -279,6 +285,9 @@ describe("provider import pipeline", () => {
     expect(summary.messagesCreated).toBe(1);
     expect(summary.messagesSkipped).toBe(2);
     expect(state.messages).toHaveLength(3);
+    expect([...state.conversations.values()][0].lastMessageAt).toEqual(
+      new Date("2026-07-22T10:00:00.000Z"),
+    );
   });
 
   it("deduplicates provider duplicates and stores out-of-order messages chronologically", async () => {
@@ -297,6 +306,23 @@ describe("provider import pipeline", () => {
       "2026-07-20T10:00:00.000Z",
       "2026-07-21T10:00:00.000Z",
     ]);
+    expect([...state.conversations.values()][0].lastMessageAt).toEqual(
+      new Date("2026-07-21T10:00:00.000Z"),
+    );
+  });
+
+  it("never sends lastMessageAt backwards on an older-only retry", async () => {
+    const provider = new MutableProvider();
+    await importProviderAccount({ ownerId: "owner-a", provider });
+    provider.messages.set("thread-a", [provider.messages.get("thread-a")![0]]);
+
+    await importProviderAccount({ ownerId: "owner-a", provider });
+
+    expect([...state.conversations.values()][0].lastMessageAt).toEqual(
+      new Date("2026-07-21T10:00:00.000Z"),
+    );
+    expect(database.conversation.upsert.mock.calls.at(-1)?.[0].update)
+      .not.toHaveProperty("lastMessageAt");
   });
 
   it("preserves manual classification, ignored review, attachment, and detach intent", async () => {

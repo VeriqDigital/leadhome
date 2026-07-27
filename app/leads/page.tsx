@@ -5,11 +5,16 @@ import { requireUser } from "@/lib/auth-user";
 import {
   formatCurrency,
   formatDate,
-  isLeadStatus,
   sourceLabels,
   statusLabels,
   statusValues,
 } from "@/lib/lead-format";
+import {
+  buildLeadsQuery,
+  LEADS_PAGE_SIZE,
+  leadSortOptions,
+  type LeadsSearchParams,
+} from "@/lib/leads-query";
 import { PageHeader } from "../page-header";
 import { StatusBadge } from "../components";
 import { StatusFilter } from "./status-filter";
@@ -17,27 +22,22 @@ import { StatusFilter } from "./status-filter";
 export default async function LeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string }>;
+  searchParams: Promise<LeadsSearchParams>;
 }) {
   const user = await requireUser();
   const params = await searchParams;
-  const status = isLeadStatus(params.status) ? params.status : undefined;
-  const leads = await prisma.lead.findMany({
-    where: {
-      userId: user.id,
-      status,
-      ...(params.q
-        ? {
-            OR: [
-              { name: { contains: params.q, mode: "insensitive" } },
-              { email: { contains: params.q, mode: "insensitive" } },
-              { company: { contains: params.q, mode: "insensitive" } },
-            ],
-          }
-        : {}),
-    },
-    orderBy: { createdAt: "desc" },
-  });
+  const { args, status, sort, page } = buildLeadsQuery(user.id, params);
+  const rows = await prisma.lead.findMany(args);
+  const hasNext = rows.length > LEADS_PAGE_SIZE;
+  const leads = rows.slice(0, LEADS_PAGE_SIZE);
+  const pageHref = (nextPage: number) => {
+    const query = new URLSearchParams();
+    if (params.q) query.set("q", params.q);
+    if (status) query.set("status", status);
+    if (sort !== "updated-desc") query.set("sort", sort);
+    if (nextPage > 1) query.set("page", String(nextPage));
+    return `/leads${query.size ? `?${query}` : ""}`;
+  };
   return (
     <div className="mx-auto max-w-315">
       <PageHeader
@@ -74,6 +74,11 @@ export default async function LeadsPage({
               })),
             ]}
           />
+          <StatusFilter
+            name="sort"
+            defaultValue={sort}
+            options={[...leadSortOptions]}
+          />
           <button className="h-10 rounded-xl border border-black/9 px-4 text-sm font-semibold">
             Apply filters
           </button>
@@ -88,6 +93,7 @@ export default async function LeadsPage({
                   <th className="pb-3 font-medium">Status</th>
                   <th className="pb-3 font-medium">Value</th>
                   <th className="pb-3 font-medium">Created</th>
+                  <th className="pb-3 font-medium">Last Updated</th>
                 </tr>
               </thead>
               <tbody>
@@ -121,6 +127,9 @@ export default async function LeadsPage({
                     <td className="py-4 text-sm text-[#687080]">
                       {formatDate(lead.createdAt)}
                     </td>
+                    <td className="py-4 text-sm text-[#687080]">
+                      {formatDate(lead.updatedAt)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -145,6 +154,34 @@ export default async function LeadsPage({
               </Link>
             </div>
           </div>
+        )}
+        {(page > 1 || hasNext) && (
+          <nav
+            aria-label="Leads pagination"
+            className="mt-6 flex items-center justify-between text-sm"
+          >
+            {page > 1 ? (
+              <Link
+                href={pageHref(page - 1)}
+                className="rounded-lg border border-black/10 px-3 py-2"
+              >
+                Previous
+              </Link>
+            ) : (
+              <span />
+            )}
+            <span className="text-xs text-[#687080]">Page {page}</span>
+            {hasNext ? (
+              <Link
+                href={pageHref(page + 1)}
+                className="rounded-lg border border-black/10 px-3 py-2"
+              >
+                Next
+              </Link>
+            ) : (
+              <span />
+            )}
+          </nav>
         )}
       </section>
     </div>

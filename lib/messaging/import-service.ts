@@ -163,14 +163,13 @@ async function importConversation({
         providerConversationId: normalized.providerConversationId,
       },
     },
-    select: { id: true, baselineImportedAt: true, lastMessageAt: true },
+    select: { id: true, baselineImportedAt: true },
   });
-  const fetchedLastMessageAt = messages.at(-1)?.occurredAt ?? null;
-  const lastMessageAt =
-    existing?.lastMessageAt &&
-    (!fetchedLastMessageAt || existing.lastMessageAt > fetchedLastMessageAt)
-      ? existing.lastMessageAt
-      : fetchedLastMessageAt;
+  const fetchedLastMessageAt = messages.reduce<Date | null>(
+    (latest, message) =>
+      !latest || message.occurredAt > latest ? message.occurredAt : latest,
+    null,
+  );
   const duplicateWithinProviderBatch = rawMessageCount - messages.length;
 
   const imported = await prisma.$transaction(async (tx) => {
@@ -191,12 +190,11 @@ async function importConversation({
         classification: normalized.suggestedClassification ?? "UNKNOWN",
         reviewState: normalized.suggestedReviewState ?? "NEEDS_REVIEW",
         providerMetadata: normalized.metadata,
-        lastMessageAt,
+        lastMessageAt: fetchedLastMessageAt,
       },
       update: {
         subject: normalized.subject,
         providerMetadata: normalized.metadata,
-        lastMessageAt,
       },
     });
 
@@ -239,6 +237,18 @@ async function importConversation({
       })),
       skipDuplicates: true,
     });
+    if (fetchedLastMessageAt) {
+      await tx.conversation.updateMany({
+        where: {
+          id: conversation.id,
+          OR: [
+            { lastMessageAt: null },
+            { lastMessageAt: { lt: fetchedLastMessageAt } },
+          ],
+        },
+        data: { lastMessageAt: fetchedLastMessageAt },
+      });
+    }
 
     if (conversation.baselineImportedAt && conversation.leadId && created.count) {
       const createdMessages = await tx.message.findMany({
@@ -370,6 +380,10 @@ async function applyMatch({
           description: current.subject ?? "No subject",
           metadata: { reason: match.reason, automatic: true },
         },
+      });
+      await tx.lead.update({
+        where: { id: match.leadId },
+        data: { updatedAt: new Date() },
       });
     }
     return false;

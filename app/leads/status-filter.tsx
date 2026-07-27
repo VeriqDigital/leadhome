@@ -9,16 +9,20 @@ type StatusOption = {
 };
 
 export function StatusFilter({
+  name = "status",
   defaultValue,
   options,
 }: {
+  name?: string;
   defaultValue: string;
   options: StatusOption[];
 }) {
   const [value, setValue] = useState(defaultValue);
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const selectedLabel =
-    options.find((option) => option.value === value)?.label ?? "All statuses";
+    options.find((option) => option.value === value)?.label ??
+    options[0]?.label ??
+    "";
 
   useEffect(() => {
     function closeOnOutsideClick(event: PointerEvent) {
@@ -38,7 +42,7 @@ export function StatusFilter({
 
   return (
     <details ref={detailsRef} className="group relative">
-      <input type="hidden" name="status" value={value} />
+      <input type="hidden" name={name} value={value} />
       <summary className="flex h-10 min-w-40 cursor-pointer list-none items-center justify-between gap-3 rounded-xl border border-black/9 bg-white px-3 text-sm transition-colors marker:hidden hover:border-black/25 hover:bg-black/[0.025] dark:bg-transparent">
         {selectedLabel}
         <ChevronDown className="size-4 text-[#687080] transition-transform group-open:rotate-180" />

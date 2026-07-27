@@ -34,6 +34,9 @@ const database = vi.hoisted(() => ({
   lead: {
     findFirst: vi.fn(async ({ where }: { where: { id: string; userId: string } }) =>
       where.userId === "owner-a" ? { id: where.id } : null),
+    update: vi.fn(async ({ where }: { where: { id: string } }) => ({
+      id: where.id,
+    })),
   },
   leadActivity: {
     create: vi.fn(async () => { state.activities++; }),
@@ -152,6 +155,22 @@ describe("canonical conversation control mutations", () => {
     expect(database.conversation.updateMany).toHaveBeenCalledWith({
       where: { id: "conversation-b", ownerId: "owner-a" },
       data: { classification: "LEAD", classificationIsManual: true },
+    });
+  });
+
+  it("advances the attached lead in a combined save", async () => {
+    await updateConversationControls({
+      ownerId: "owner-a",
+      conversationId: "conversation-b",
+      leadId: "lead-b",
+      classification: "UNKNOWN",
+      reviewState: "NEEDS_REVIEW",
+      status: "OPEN",
+    });
+
+    expect(database.lead.update).toHaveBeenCalledWith({
+      where: { id: "lead-b" },
+      data: { updatedAt: expect.any(Date) },
     });
   });
 

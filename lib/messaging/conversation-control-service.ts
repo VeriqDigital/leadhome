@@ -235,6 +235,10 @@ export async function updateConversationControls(input: {
           description: current.subject ?? "No subject",
         },
       });
+      await tx.lead.update({
+        where: { id: input.leadId },
+        data: { updatedAt: new Date() },
+      });
     }
 
     const canonical = await readCanonical(tx, input.ownerId, input.conversationId);

@@ -145,6 +145,10 @@ export async function attachConversationToLead({
         description: conversation.subject ?? "No subject",
       },
     });
+    await tx.lead.update({
+      where: { id: leadId },
+      data: { updatedAt: new Date() },
+    });
     return updated;
   });
 }

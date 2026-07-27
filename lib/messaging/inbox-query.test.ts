@@ -1,16 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { INBOX_PAGE_SIZE, getConversationDetail, listConversationSummaries } from "./inbox-query";
+import {
+  INBOX_PAGE_SIZE,
+  conversationMessageDate,
+  getConversationDetail,
+  listConversationSummaries,
+} from "./inbox-query";
 
 const database = vi.hoisted(() => ({
   conversation: { findMany: vi.fn(), findFirst: vi.fn() },
 }));
 vi.mock("@/lib/prisma", () => ({ prisma: database }));
 
-const row = (id: string, date: Date) => ({
+const row = (id: string, date: Date | null, messageDate = date ?? new Date()) => ({
   id, provider: "GMAIL", subject: `Subject ${id}`, status: "OPEN",
   classification: "UNKNOWN", reviewState: "NEEDS_REVIEW", lastMessageAt: date,
   lead: null,
-  messages: [{ sender: "sender@example.com", bodyText: "A full body that becomes a bounded preview", direction: "INBOUND" }],
+  messages: [{ sender: "sender@example.com", bodyText: "A full body that becomes a bounded preview", direction: "INBOUND", receivedAt: messageDate }],
 });
 
 describe("inbox queries", () => {
@@ -33,11 +38,39 @@ describe("inbox queries", () => {
     );
     const result = await listConversationSummaries("owner-a", { page: 2 });
     const query = database.conversation.findMany.mock.calls[0][0];
-    expect(query.orderBy).toEqual([{ lastMessageAt: "desc" }, { id: "desc" }]);
+    expect(query.orderBy).toEqual([
+      { lastMessageAt: { sort: "desc", nulls: "last" } },
+      { id: "desc" },
+    ]);
     expect(query.skip).toBe(INBOX_PAGE_SIZE);
     expect(result.items).toHaveLength(INBOX_PAGE_SIZE);
     expect(result.hasNext).toBe(true);
     expect(result.hasPrevious).toBe(true);
+  });
+
+  it("requests null timestamps last and exposes the newest-message date as a fallback", async () => {
+    const newestMessage = new Date("2026-07-13T14:00:00.000Z");
+    database.conversation.findMany.mockResolvedValue([
+      row("dated", new Date("2026-07-14T14:00:00.000Z")),
+      row("missing-date", null, newestMessage),
+    ]);
+    const result = await listConversationSummaries("owner-a", { page: 1 });
+    expect(result.items[1].latestMessage?.receivedAt).toEqual(newestMessage);
+  });
+
+  it("uses descending IDs as a stable equal-timestamp tie-breaker", async () => {
+    database.conversation.findMany.mockResolvedValue([]);
+    await listConversationSummaries("owner-a", { page: 1 });
+    expect(database.conversation.findMany.mock.calls[0][0].orderBy[1]).toEqual({
+      id: "desc",
+    });
+  });
+
+  it("returns no display date for conversations that truly have no messages", () => {
+    expect(conversationMessageDate({
+      lastMessageAt: null,
+      latestMessage: null,
+    })).toBeNull();
   });
 
   it("combines owner-scoped search and filters", async () => {

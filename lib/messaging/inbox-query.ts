@@ -30,8 +30,19 @@ export type ConversationSummaryDto = {
   reviewState: ConversationReviewState;
   lead: { id: string; name: string; email: string | null } | null;
   lastMessageAt: Date | null;
-  latestMessage: { sender: string; bodyPreview: string | null; direction: "INBOUND" | "OUTBOUND" } | null;
+  latestMessage: {
+    sender: string;
+    bodyPreview: string | null;
+    direction: "INBOUND" | "OUTBOUND";
+    receivedAt: Date;
+  } | null;
 };
+
+export function conversationMessageDate(
+  conversation: Pick<ConversationSummaryDto, "lastMessageAt" | "latestMessage">,
+) {
+  return conversation.lastMessageAt ?? conversation.latestMessage?.receivedAt ?? null;
+}
 
 function whereFor(ownerId: string, filters: InboxFilters): Prisma.ConversationWhereInput {
   const query = filters.query?.trim().slice(0, 100);
@@ -61,7 +72,10 @@ export async function listConversationSummaries(ownerId: string, filters: InboxF
   const skip = (filters.page - 1) * INBOX_PAGE_SIZE;
   const rows = await prisma.conversation.findMany({
     where,
-    orderBy: [{ lastMessageAt: "desc" }, { id: "desc" }],
+    orderBy: [
+      { lastMessageAt: { sort: "desc", nulls: "last" } },
+      { id: "desc" },
+    ],
     skip,
     take: INBOX_PAGE_SIZE + 1,
     select: {
@@ -71,7 +85,12 @@ export async function listConversationSummaries(ownerId: string, filters: InboxF
       messages: {
         orderBy: [{ receivedAt: "desc" }, { id: "desc" }],
         take: 1,
-        select: { sender: true, bodyText: true, direction: true },
+        select: {
+          sender: true,
+          bodyText: true,
+          direction: true,
+          receivedAt: true,
+        },
       },
     },
   });
@@ -85,6 +104,7 @@ export async function listConversationSummaries(ownerId: string, filters: InboxF
       sender: messages[0].sender,
       bodyPreview: messages[0].bodyText?.replace(/\s+/g, " ").slice(0, 140) ?? null,
       direction: messages[0].direction,
+      receivedAt: messages[0].receivedAt,
     } : null,
   }));
   return { items, hasNext, hasPrevious: filters.page > 1 };

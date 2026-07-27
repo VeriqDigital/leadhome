@@ -54,7 +54,10 @@ async function persisted(
 ): Promise<InboxMutationState> {
   try {
     const result = await operation();
-    if (result.changed) revalidatePath("/inbox");
+    if (result.changed) {
+      revalidatePath("/inbox");
+      revalidatePath("/leads");
+    }
     return {
       success: true,
       changed: result.changed,

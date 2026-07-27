@@ -7,6 +7,7 @@ import type {
 import { requireUser } from "@/lib/auth-user";
 import { prisma } from "@/lib/prisma";
 import {
+  conversationMessageDate,
   getConversationDetail, listConversationSummaries, type InboxFilters,
 } from "@/lib/messaging/inbox-query";
 import { GmailSyncForm } from "./gmail-sync-form";
@@ -103,7 +104,11 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
             className={`inbox-row block border-b border-black/[0.06] p-4 focus-visible:outline focus-visible:outline-2 ${selectedId === conversation.id ? "inbox-row-selected bg-[#f0effb]" : "hover:bg-black/[0.025]"}`}
           >
             <div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold">{conversation.subject ?? "No subject"}</h2>
-              <time className="shrink-0 text-[11px] text-[#7c828d]">{conversation.lastMessageAt ? compactDate.format(conversation.lastMessageAt) : ""}</time></div>
+              <time className="shrink-0 text-[11px] text-[#7c828d]">
+                {conversationMessageDate(conversation)
+                  ? compactDate.format(conversationMessageDate(conversation)!)
+                  : "No message date."}
+              </time></div>
             <p className="mt-1 truncate text-xs font-medium text-[#565d69]">{conversation.latestMessage?.sender ?? "No participant"}</p>
             <p className="mt-1 line-clamp-2 text-xs leading-5 text-[#777e89]">{conversation.latestMessage?.bodyPreview ?? "No message preview"}</p>
             <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]"><Badge text={label(conversation.provider)}/><Badge text={label(conversation.classification)}/><Badge text={label(conversation.reviewState)}/>
