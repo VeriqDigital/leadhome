@@ -12,6 +12,7 @@ import {
 } from "@/lib/validation";
 import type { CanonicalLead } from "@/lib/lead-types";
 import { reportOperationalError } from "@/lib/server-errors";
+import { changeLeadStatusInTransaction } from "@/lib/pipeline/status-service";
 
 function values(formData: FormData) {
   const message = formData.get("message");
@@ -60,6 +61,7 @@ function canonicalLead(lead: {
 function revalidateLead(id?: string) {
   revalidatePath("/");
   revalidatePath("/leads");
+  revalidatePath("/pipeline");
   if (id) revalidatePath(`/leads/${id}`);
 }
 
@@ -125,22 +127,51 @@ export async function updateLeadAction(
       });
       if (!previous) return { kind: "not-found" as const };
 
-      const activities = buildLeadUpdateActivities(previous, parsed.data);
-      if (!activities.length) {
+      const activities = buildLeadUpdateActivities(previous, parsed.data).filter(
+        (activity) => activity.type !== "STATUS_CHANGED",
+      );
+      const statusChanged = previous.status !== parsed.data.status;
+      if (!activities.length && !statusChanged) {
         return {
           kind: "unchanged" as const,
           lead: canonicalLead(previous),
         };
       }
 
-      const updated = await tx.lead.update({ where: { id }, data: parsed.data });
-      await tx.leadActivity.createMany({
-        data: activities.map((activity) => ({
-          ...activity,
+      if (statusChanged) {
+        const statusResult = await changeLeadStatusInTransaction(tx, {
+          ownerId: user.id,
           leadId: id,
-          userId: user.id,
-        })),
-      });
+          status: parsed.data.status,
+          current: { id, status: previous.status },
+        });
+        if (statusResult.kind !== "changed") {
+          throw new Error("Lead status was not updated.");
+        }
+      }
+      const nonStatusData = {
+        name: parsed.data.name,
+        email: parsed.data.email,
+        phone: parsed.data.phone,
+        company: parsed.data.company,
+        source: parsed.data.source,
+        message: parsed.data.message,
+        estimatedValue: parsed.data.estimatedValue,
+        nextFollowUpDate: parsed.data.nextFollowUpDate,
+      };
+      const updated = activities.length
+        ? await tx.lead.update({ where: { id }, data: nonStatusData })
+        : await tx.lead.findFirst({ where: { id, userId: user.id } });
+      if (!updated) return { kind: "not-found" as const };
+      if (activities.length) {
+        await tx.leadActivity.createMany({
+          data: activities.map((activity) => ({
+            ...activity,
+            leadId: id,
+            userId: user.id,
+          })),
+        });
+      }
       return {
         kind: "changed" as const,
         lead: canonicalLead(updated),

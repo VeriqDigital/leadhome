@@ -16,6 +16,7 @@ import {
   statusLabels,
   statusValues,
 } from "@/lib/lead-format";
+import { getDashboardLeadMetrics } from "@/lib/pipeline/dashboard-metrics";
 import {
   DashboardCard,
   Header,
@@ -38,9 +39,6 @@ const colors: Record<LeadStatus, string> = {
 };
 export default async function Home() {
   const user = await requireUser();
-  const startOfWeek = new Date();
-  startOfWeek.setHours(0, 0, 0, 0);
-  startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
   const now = new Date();
   const startOfToday = new Date(now);
   startOfToday.setHours(0, 0, 0, 0);
@@ -52,36 +50,14 @@ export default async function Home() {
     dueAt: true,
     lead: { select: { id: true, name: true } },
   } as const;
-  const [recent, newCount, followUpCount, wonThisWeek, pipelineValue, grouped, overdueTasks, todayTasks, upcomingTasks] =
+  const [recent, leadMetrics, overdueTasks, todayTasks, upcomingTasks] =
     await Promise.all([
       prisma.lead.findMany({
         where: { userId: user.id },
         orderBy: { createdAt: "desc" },
         take: 10,
       }),
-      prisma.lead.count({ where: { userId: user.id, status: "NEW" } }),
-      prisma.lead.count({
-        where: {
-          userId: user.id,
-          nextFollowUpDate: { lt: endOfToday },
-        },
-      }),
-      prisma.lead.count({
-        where: {
-          userId: user.id,
-          status: "WON",
-          updatedAt: { gte: startOfWeek },
-        },
-      }),
-      prisma.lead.aggregate({
-        where: { userId: user.id, status: { notIn: ["WON", "LOST"] } },
-        _sum: { estimatedValue: true },
-      }),
-      prisma.lead.groupBy({
-        by: ["status"],
-        where: { userId: user.id },
-        _count: true,
-      }),
+      getDashboardLeadMetrics(user.id, now),
       prisma.task.findMany({
         where: { ownerId: user.id, status: "OPEN", dueAt: { lt: startOfToday } },
         orderBy: [{ dueAt: "asc" }, { id: "asc" }],
@@ -105,6 +81,13 @@ export default async function Home() {
         select: taskSelect,
       }),
     ]);
+  const {
+    newCount,
+    followUpCount,
+    wonThisWeek,
+    pipelineValue,
+    grouped,
+  } = leadMetrics;
   const counts = Object.fromEntries(
     grouped.map((row) => [row.status, row._count]),
   ) as Partial<Record<LeadStatus, number>>;

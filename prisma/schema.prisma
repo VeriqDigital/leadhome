@@ -109,6 +109,9 @@ model Lead {
 
   @@index([userId, createdAt])
   @@index([userId, status])
+  @@index([userId, status, nextFollowUpDate, updatedAt, id])
+  @@index([userId, status, updatedAt, id])
+  @@index([userId, status, estimatedValue, id])
 }
 
 model LeadActivity {
