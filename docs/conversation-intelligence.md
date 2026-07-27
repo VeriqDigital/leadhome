@@ -151,6 +151,24 @@ Suggested action items do not create Tasks automatically. A user must open the
 editable task form, review or change its prefilled values, and explicitly save
 one task at a time.
 
+## Completed analysis presentation
+
+The Inbox presents a completed analysis as a concise, expandable summary,
+responsive key-details grid, compact contact links, sentiment indicator,
+suggested actions, and a bounded list of information to clarify. Presentation
+helpers normalize whitespace and format structured dates without changing the
+canonical stored analysis.
+
+Copy summary copies the complete persisted summary. Copy notes builds a
+deterministic plain-text overview from the existing structured result and
+omits provider and operational metadata. These controls, timeline formatting,
+and disclosures make no additional OpenAI requests.
+
+Suggested actions continue to pass only the analysis ID and bounded action
+index into the owner-scoped task-prefill flow. Opening that form does not
+create a Task; the user must review the fields and explicitly save it. No
+completed-analysis presentation action mutates a Lead.
+
 ## Canonical persistence and retention
 
 There is one owner-scoped `ConversationAnalysis` for each conversation. Its

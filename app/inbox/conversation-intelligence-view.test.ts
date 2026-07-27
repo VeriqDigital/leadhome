@@ -243,10 +243,20 @@ describe("Conversation Intelligence Inbox integration", () => {
     expect(source).toContain("controller.abort()");
     expect(source).toContain("router.refresh()");
     expect(source).not.toContain("router.push(");
-    expect(source.match(/aria-live=/g)).toHaveLength(1);
+    // One lifecycle announcement and one visually hidden clipboard result.
+    expect(source.match(/aria-live=/g)).toHaveLength(2);
     expect(source).toContain(
       "/tasks/new?analysis=${encodeURIComponent(analysis.id)}&item=${index}",
     );
+    expect(source).toContain("sm:grid-cols-2");
+    expect(source).toContain('aria-expanded={summaryExpanded}');
+    expect(source).toContain('aria-expanded={missingExpanded}');
+    expect(source).toContain("Information to clarify");
+    expect(source).toContain("validEmailHref(output.contact.email)");
+    expect(source).toContain("validPhoneHref(output.contact.phone)");
+    expect(source).toContain("sentimentClasses[output.sentiment.value]");
+    expect(source).toContain('copy("summary", output.summary)');
+    expect(source).not.toContain("openai");
   });
 
   it("uses owner-scoped reads and strict stored-output parsing", () => {
