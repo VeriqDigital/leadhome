@@ -30,6 +30,12 @@ The Gmail handler does not duplicate Gmail normalization, conversation
 upserts, message deduplication, lead matching, review behavior, or import
 summary calculation.
 
+The importer, not the queue, records business activity. A first conversation
+import, later messages on attached conversations, and automatic lead links use
+deterministic activity keys, so a retried job cannot duplicate those events.
+Progress phases, retries, no-op checks, and operational counters are not
+timeline activity.
+
 ## Job data and statuses
 
 `Job` records carry their type and lifecycle state, a typed JSON payload,
@@ -293,6 +299,10 @@ Conversation-analysis Jobs retain only bounded operational result metadata.
 Canonical `ConversationAnalysis` records retain the model, input/output/total
 token counts, duration, content hash, and truncation state. Pricing is not
 hardcoded and no monetary cost estimate is stored.
+
+A successful Conversation Intelligence handler writes its canonical result and
+one idempotent `AI_ANALYSIS_COMPLETED` activity in the same lease-fenced
+transaction. Failed, skipped, or cancelled attempts do not create that event.
 
 ## Intentionally deferred
 

@@ -151,9 +151,9 @@ const cardSelect = {
   nextFollowUpDate: true,
   updatedAt: true,
   activities: {
-    orderBy: [{ createdAt: "desc" as const }, { id: "desc" as const }],
+    orderBy: [{ occurredAt: "desc" as const }, { id: "desc" as const }],
     take: 1,
-    select: { createdAt: true },
+    select: { occurredAt: true },
   },
   tasks: {
     where: { status: "OPEN" as const },
@@ -187,7 +187,7 @@ function cardDto(row: CardRow, now: Date): PipelineCardDto {
     estimatedValue: row.estimatedValue?.toString() ?? null,
     nextFollowUpDate: row.nextFollowUpDate,
     updatedAt: row.updatedAt,
-    latestActivityAt: row.activities[0]?.createdAt ?? null,
+    latestActivityAt: row.activities[0]?.occurredAt ?? null,
     openTaskCount: row._count.tasks,
     overdueTaskCount: datedTasks.filter((dueAt) => dueAt < now).length,
     dueTodayTaskCount: datedTasks.filter(

@@ -4,12 +4,16 @@ const mocks = vi.hoisted(() => ({
   accountFind: vi.fn(),
   conversationCreate: vi.fn(),
   conversationFind: vi.fn(),
+  conversationFindMany: vi.fn(),
   conversationUpdate: vi.fn(),
   messageCreate: vi.fn(),
   messageFind: vi.fn(),
+  messageFindMany: vi.fn(),
   leadFind: vi.fn(),
+  leadFindMany: vi.fn(),
   leadUpdate: vi.fn(),
-  activityCreate: vi.fn(),
+  taskFindMany: vi.fn(),
+  activityCreateMany: vi.fn(),
   transaction: vi.fn(),
   analysisEnqueue: vi.fn(),
 }));
@@ -47,24 +51,43 @@ beforeEach(() => {
   mocks.accountFind.mockResolvedValue({ id: "account-a" });
   mocks.conversationCreate.mockResolvedValue({ id: conversationId });
   mocks.conversationFind.mockResolvedValue({ id: conversationId });
+  mocks.conversationFindMany.mockResolvedValue([
+    { id: conversationId, leadId },
+  ]);
   mocks.messageFind.mockResolvedValue({ id: "message-a" });
+  mocks.messageFindMany.mockResolvedValue([
+    { id: "message-a", conversationId },
+  ]);
   mocks.conversationUpdate.mockImplementation(({ data }) =>
     Promise.resolve({ id: conversationId, ...data }),
   );
   mocks.messageCreate.mockResolvedValue({ id: "message-a" });
   mocks.leadFind.mockResolvedValue({ id: leadId });
+  mocks.leadFindMany.mockResolvedValue([{ id: leadId }]);
   mocks.leadUpdate.mockResolvedValue({ id: leadId });
-  mocks.activityCreate.mockResolvedValue({ id: "activity-a" });
+  mocks.taskFindMany.mockResolvedValue([]);
+  mocks.activityCreateMany.mockImplementation(({ data }) =>
+    Promise.resolve({ count: data.length }),
+  );
   mocks.analysisEnqueue.mockResolvedValue(undefined);
   mocks.transaction.mockImplementation((operation) =>
     operation({
       conversation: {
         findFirst: mocks.conversationFind,
+        findMany: mocks.conversationFindMany,
         update: mocks.conversationUpdate,
       },
-      message: { create: mocks.messageCreate },
-      lead: { findFirst: mocks.leadFind, update: mocks.leadUpdate },
-      leadActivity: { create: mocks.activityCreate },
+      message: {
+        create: mocks.messageCreate,
+        findMany: mocks.messageFindMany,
+      },
+      lead: {
+        findFirst: mocks.leadFind,
+        findMany: mocks.leadFindMany,
+        update: mocks.leadUpdate,
+      },
+      task: { findMany: mocks.taskFindMany },
+      leadActivity: { createMany: mocks.activityCreateMany },
     }),
   );
 });
@@ -104,7 +127,9 @@ describe("conversation service", () => {
       id: conversationId,
       accountId: "account-a",
       leadId,
+      provider: "GMAIL",
     });
+    const receivedAt = new Date("2026-07-24T12:00:00.000Z");
     await createMessage({
       ownerId,
       conversationId,
@@ -114,7 +139,7 @@ describe("conversation service", () => {
       recipients: ["inbox@example.test"],
       subject: "Estimate",
       bodyText: "A private body that must not enter activity metadata.",
-      receivedAt: new Date("2026-07-24T12:00:00.000Z"),
+      receivedAt,
     });
 
     expect(mocks.messageCreate).toHaveBeenCalledWith({
@@ -124,17 +149,27 @@ describe("conversation service", () => {
         accountId: "account-a",
       }),
     });
-    expect(mocks.activityCreate).toHaveBeenCalledWith({
-      data: {
-        leadId,
-        userId: ownerId,
-        conversationId,
-        messageId: "message-a",
-        type: "MESSAGE_RECEIVED",
-        title: "Message received",
-        description: "Estimate",
-      },
+    expect(mocks.activityCreateMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          leadId,
+          userId: ownerId,
+          conversationId,
+          messageId: "message-a",
+          taskId: null,
+          type: "MESSAGE_RECEIVED",
+          actorType: "CONTACT",
+          source: "GMAIL",
+          title: "New email received",
+          description: "Estimate",
+          occurredAt: receivedAt,
+          idempotencyKey: "message:message-a:INBOUND",
+        }),
+      ],
+      skipDuplicates: true,
     });
+    expect(mocks.activityCreateMany.mock.calls[0]?.[0].data[0])
+      .not.toHaveProperty("bodyText");
   });
 
   it("rejects message creation when the conversation is not owned", async () => {
@@ -171,7 +206,7 @@ describe("conversation service", () => {
       bodyText: "Hello",
       receivedAt: new Date(),
     })).rejects.toMatchObject({ code: "P2002" });
-    expect(mocks.activityCreate).not.toHaveBeenCalled();
+    expect(mocks.activityCreateMany).not.toHaveBeenCalled();
   });
 
   it("attaches once, checks both owners, and writes a timeline event", async () => {
@@ -197,15 +232,21 @@ describe("conversation service", () => {
       where: { id: leadId, userId: ownerId },
       select: { id: true },
     });
-    expect(mocks.activityCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        leadId,
-        userId: ownerId,
-        conversationId,
-        type: "CONVERSATION_LINKED",
-      }),
+    expect(mocks.activityCreateMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          leadId,
+          userId: ownerId,
+          conversationId,
+          type: "CONVERSATION_LINKED",
+          actorType: "USER",
+          source: "INBOX",
+          title: "Conversation attached",
+        }),
+      ],
+      skipDuplicates: false,
     });
-    expect(mocks.activityCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.activityCreateMany).toHaveBeenCalledTimes(1);
     expect(mocks.leadUpdate).toHaveBeenCalledWith({
       where: { id: leadId },
       data: { updatedAt: expect.any(Date) },
@@ -233,11 +274,17 @@ describe("conversation service", () => {
         reviewState: "RESOLVED",
       }),
     });
-    expect(mocks.activityCreate).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        leadId,
-        type: "CONVERSATION_UNLINKED",
-      }),
+    expect(mocks.activityCreateMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          leadId,
+          type: "CONVERSATION_UNLINKED",
+          actorType: "USER",
+          source: "INBOX",
+          title: "Conversation detached",
+        }),
+      ],
+      skipDuplicates: false,
     });
     expect(mocks.analysisEnqueue).not.toHaveBeenCalled();
   });

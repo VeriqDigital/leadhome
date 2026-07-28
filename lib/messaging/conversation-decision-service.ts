@@ -5,7 +5,11 @@ import type {
   ConversationReviewState,
   ConversationStatus,
 } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
+import {
+  updateConversationClassification,
+  updateConversationReviewState,
+  updateConversationStatus,
+} from "./conversation-control-service";
 
 export async function setConversationClassification({
   ownerId,
@@ -16,11 +20,11 @@ export async function setConversationClassification({
   conversationId: string;
   classification: ConversationClassification;
 }) {
-  const updated = await prisma.conversation.updateMany({
-    where: { id: conversationId, ownerId },
-    data: { classification, classificationIsManual: true },
+  await updateConversationClassification({
+    ownerId,
+    conversationId,
+    classification,
   });
-  if (!updated.count) throw new Error("Conversation not found.");
 }
 
 export async function setConversationStatus({
@@ -28,10 +32,7 @@ export async function setConversationStatus({
 }: {
   ownerId: string; conversationId: string; status: ConversationStatus;
 }) {
-  const updated = await prisma.conversation.updateMany({
-    where: { id: conversationId, ownerId }, data: { status },
-  });
-  if (!updated.count) throw new Error("Conversation not found.");
+  await updateConversationStatus({ ownerId, conversationId, status });
 }
 
 export async function setConversationReviewState({
@@ -43,9 +44,9 @@ export async function setConversationReviewState({
   conversationId: string;
   reviewState: ConversationReviewState;
 }) {
-  const updated = await prisma.conversation.updateMany({
-    where: { id: conversationId, ownerId },
-    data: { reviewState },
+  await updateConversationReviewState({
+    ownerId,
+    conversationId,
+    reviewState,
   });
-  if (!updated.count) throw new Error("Conversation not found.");
 }

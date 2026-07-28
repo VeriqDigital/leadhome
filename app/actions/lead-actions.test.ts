@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
   createLead: vi.fn(),
-  createActivity: vi.fn(),
   findLead: vi.fn(),
+  findLeads: vi.fn(),
   updateLead: vi.fn(),
   updateLeads: vi.fn(),
   createActivities: vi.fn(),
@@ -93,7 +93,6 @@ const canonical = {
 beforeEach(() => {
   mocks.currentLead = { ...existing };
   mocks.createLead.mockResolvedValue({ id: leadId });
-  mocks.createActivity.mockResolvedValue({ id: "activity-a" });
   mocks.findLead.mockImplementation(({ where }) =>
     Promise.resolve(
       mocks.currentLead?.id === where.id &&
@@ -102,6 +101,16 @@ beforeEach(() => {
         : null,
     ),
   );
+  mocks.findLeads.mockImplementation(({ where }) => {
+    const current = mocks.currentLead;
+    return Promise.resolve(
+      current !== null &&
+        current.userId === where.userId &&
+        where.id.in.includes(current.id)
+        ? [{ id: current.id }]
+        : [],
+    );
+  });
   mocks.updateLead.mockImplementation(({ data }) =>
     Promise.resolve((mocks.currentLead = {
       ...mocks.currentLead!,
@@ -130,11 +139,11 @@ beforeEach(() => {
       lead: {
         create: mocks.createLead,
         findFirst: mocks.findLead,
+        findMany: mocks.findLeads,
         update: mocks.updateLead,
         updateMany: mocks.updateLeads,
       },
       leadActivity: {
-        create: mocks.createActivity,
         createMany: mocks.createActivities,
       },
     }),
@@ -146,14 +155,23 @@ describe("lead action activity transactions", () => {
     await expect(createLeadAction({}, form())).rejects.toThrow("NEXT_REDIRECT");
 
     expect(mocks.transaction).toHaveBeenCalledOnce();
-    expect(mocks.createActivity).toHaveBeenCalledWith({
-      data: {
-        leadId,
-        userId: "user-a",
-        type: "LEAD_CREATED",
-        title: "Lead created",
-        description: "Created manually",
-      },
+    expect(mocks.findLeads).toHaveBeenCalledWith({
+      where: { id: { in: [leadId] }, userId: "user-a" },
+      select: { id: true },
+    });
+    expect(mocks.createActivities).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          leadId,
+          userId: "user-a",
+          type: "LEAD_CREATED",
+          actorType: "USER",
+          source: "MANUAL",
+          title: "Lead created",
+          description: "Created manually",
+        }),
+      ],
+      skipDuplicates: false,
     });
   });
 
@@ -180,12 +198,17 @@ describe("lead action activity transactions", () => {
       where: { id: leadId, userId: "user-a", status: "NEW" },
       data: { status: "CONTACTED" },
     });
-    expect(mocks.createActivity).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        leadId,
-        userId: "user-a",
-        type: "STATUS_CHANGED",
-      }),
+    expect(mocks.createActivities).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          leadId,
+          userId: "user-a",
+          type: "STATUS_CHANGED",
+          actorType: "USER",
+          source: "MANUAL",
+        }),
+      ],
+      skipDuplicates: false,
     });
   });
 
@@ -228,56 +251,65 @@ describe("lead action activity transactions", () => {
     }));
     expect(mocks.updateLeads).toHaveBeenCalledTimes(1);
     expect(
-      mocks.createActivity.mock.calls.filter(
-        ([input]) => input.data.type === "STATUS_CHANGED",
+      mocks.createActivities.mock.calls.flatMap(
+        ([input]) => input.data.filter(
+          (activity: { type: string }) => activity.type === "STATUS_CHANGED",
+        ),
       ),
     ).toHaveLength(1);
   });
 
-  it("changes follow-up without changing status", async () => {
+  it("does not let a stale or tampered lead form schedule a follow-up", async () => {
     await expect(updateLeadAction(
       leadId,
       {},
       form({ nextFollowUp: "2026-08-12" }),
+    )).resolves.toEqual({
+      success: true,
+      changed: false,
+      message: "No changes to save.",
+      lead: canonical,
+    });
+    expect(mocks.updateLead).not.toHaveBeenCalled();
+    expect(mocks.createActivities).not.toHaveBeenCalled();
+  });
+
+  it("preserves a task-derived follow-up while saving another lead field", async () => {
+    const nextFollowUpDate = new Date("2026-08-12T12:00:00");
+    mocks.currentLead = {
+      ...existing,
+      status: "CONTACTED",
+      nextFollowUpDate,
+    };
+    await expect(updateLeadAction(
+      leadId,
+      {},
+      form({
+        company: "Updated company",
+        status: "CONTACTED",
+        nextFollowUp: "",
+      }),
     )).resolves.toEqual(expect.objectContaining({
       success: true,
       changed: true,
       lead: expect.objectContaining({
-        status: "NEW",
+        company: "Updated company",
         nextFollowUp: "2026-08-12",
       }),
     }));
     expect(mocks.updateLead).toHaveBeenCalledWith({
       where: { id: leadId },
-      data: expect.objectContaining({
-        nextFollowUpDate: new Date("2026-08-12T12:00:00"),
+      data: expect.not.objectContaining({
+        nextFollowUpDate: expect.anything(),
       }),
     });
-    expect(mocks.createActivities).toHaveBeenCalledWith({
-      data: [expect.objectContaining({ type: "FOLLOW_UP_CHANGED" })],
-    });
-  });
-
-  it("clears follow-up without altering the persisted status", async () => {
-    mocks.findLead.mockResolvedValue({
-      ...existing,
-      status: "CONTACTED",
-      nextFollowUpDate: new Date("2026-08-12T12:00:00"),
-    });
-    await updateLeadAction(
-      leadId,
-      {},
-      form({ status: "CONTACTED", nextFollowUp: "" }),
-    );
-    expect(mocks.updateLead).toHaveBeenCalledWith({
-      where: { id: leadId },
-      data: expect.objectContaining({
-        nextFollowUpDate: null,
-      }),
-    });
-    expect(mocks.createActivities).toHaveBeenCalledWith({
-      data: [expect.objectContaining({ type: "FOLLOW_UP_CHANGED" })],
-    });
+    expect(
+      mocks.createActivities.mock.calls.flatMap(
+        ([input]) => input.data.filter(
+          (activity: { type: string }) => activity.type === "FOLLOW_UP_CHANGED",
+        ),
+      ),
+    ).toHaveLength(0);
   });
 
   it("returns an accurate success without writing an unchanged save", async () => {
@@ -300,7 +332,7 @@ describe("lead action activity transactions", () => {
   });
 
   it("rolls back the update result when activity creation fails", async () => {
-    mocks.createActivity.mockRejectedValue(new Error("database failure"));
+    mocks.createActivities.mockRejectedValue(new Error("database failure"));
     await expect(updateLeadAction(
       leadId,
       {},
@@ -309,10 +341,10 @@ describe("lead action activity transactions", () => {
       message: "We couldn't update this lead. Please try again.",
     });
     expect(mocks.updateLeads).toHaveBeenCalled();
-    expect(mocks.createActivity).toHaveBeenCalled();
+    expect(mocks.createActivities).toHaveBeenCalled();
   });
 
-  it("deletes only the owned lead so database cascades remove its activities", async () => {
+  it("deletes only the owned lead", async () => {
     await expect(deleteLeadAction(leadId)).rejects.toThrow("NEXT_REDIRECT");
     expect(mocks.deleteLeads).toHaveBeenCalledWith({
       where: { id: leadId, userId: "user-a" },

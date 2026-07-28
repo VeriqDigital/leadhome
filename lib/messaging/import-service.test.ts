@@ -76,6 +76,18 @@ const database = {
           conversation.id === where.id && conversation.ownerId === where.ownerId,
       ) ?? null,
     ),
+    findMany: vi.fn(async ({ where }: any) => {
+      const ids = new Set(where.id.in);
+      return [...state.conversations.values()]
+        .filter(
+          (conversation) =>
+            conversation.ownerId === where.ownerId && ids.has(conversation.id),
+        )
+        .map((conversation) => ({
+          id: conversation.id,
+          leadId: conversation.leadId,
+        }));
+    }),
     updateMany: vi.fn(async ({ where, data }: any) => {
       const entry = [...state.conversations.entries()].find(([, conversation]) =>
         conversation.id === where.id &&
@@ -96,6 +108,18 @@ const database = {
   },
   message: {
     findMany: vi.fn(async ({ where, select }: any) => {
+      if (where.id?.in) {
+        const ids = new Set(where.id.in);
+        return [...state.messages.values()]
+          .filter(
+            (message) =>
+              message.ownerId === where.ownerId && ids.has(message.id),
+          )
+          .map((message) => ({
+            id: message.id,
+            conversationId: message.conversationId,
+          }));
+      }
       const ids = new Set(where.providerMessageId.in);
       return [...state.messages.values()]
         .filter(
@@ -109,6 +133,7 @@ const database = {
                 id: message.id,
                 direction: message.direction,
                 subject: message.subject,
+                receivedAt: message.receivedAt,
               }
             : { providerMessageId: message.providerMessageId },
         );
@@ -128,26 +153,36 @@ const database = {
     }),
   },
   leadActivity: {
-    createMany: vi.fn(async ({ data }: any) => {
+    createMany: vi.fn(async ({ data, skipDuplicates }: any) => {
+      let count = 0;
       for (const activity of data) {
         if (
+          skipDuplicates &&
           state.activities.some(
             (existing) =>
-              existing.messageId === activity.messageId &&
-              existing.type === activity.type,
+              (activity.idempotencyKey &&
+                existing.userId === activity.userId &&
+                existing.idempotencyKey === activity.idempotencyKey) ||
+              (activity.messageId &&
+                existing.messageId === activity.messageId &&
+                existing.type === activity.type),
           )
         ) continue;
         state.activities.push(activity);
+        count++;
       }
-      return { count: data.length };
-    }),
-    create: vi.fn(async ({ data }: any) => {
-      state.activities.push(data);
-      return { id: `activity-${state.activities.length}` };
+      return { count };
     }),
   },
   lead: {
+    findMany: vi.fn(async ({ where }: any) =>
+      where.userId === "owner-a"
+        ? where.id.in.map((id: string) => ({ id }))
+        : []),
     update: vi.fn(async ({ where, data }: any) => ({ ...where, ...data })),
+  },
+  task: {
+    findMany: vi.fn(async () => []),
   },
 };
 
@@ -284,6 +319,20 @@ describe("provider import pipeline", () => {
     });
     expect(state.account).toEqual(expect.objectContaining({ ownerId: "owner-a" }));
     expect(state.messages).toHaveLength(2);
+    const conversation = [...state.conversations.values()][0];
+    expect(state.activities).toContainEqual(
+      expect.objectContaining({
+        userId: "owner-a",
+        leadId: null,
+        conversationId: conversation.id,
+        type: "CONVERSATION_IMPORTED",
+        actorType: "SYSTEM",
+        source: "INBOX",
+        title: "Conversation imported",
+        idempotencyKey:
+          `conversation-import:FAKE:account-a:${conversation.id}`,
+      }),
+    );
   });
 
   it("is idempotent when identical data is imported twice", async () => {
@@ -293,6 +342,11 @@ describe("provider import pipeline", () => {
 
     expect(state.conversations).toHaveLength(1);
     expect(state.messages).toHaveLength(2);
+    expect(
+      state.activities.filter(
+        (activity) => activity.type === "CONVERSATION_IMPORTED",
+      ),
+    ).toHaveLength(1);
     expect(repeated).toEqual(expect.objectContaining({
       conversationsCreated: 0,
       conversationsUpdated: 1,
@@ -457,6 +511,22 @@ describe("provider import pipeline", () => {
       state.activities.filter((activity) => activity.type === "CONVERSATION_LINKED"),
     ).toHaveLength(1);
     expect(
+      state.activities.find(
+        (activity) => activity.type === "CONVERSATION_LINKED",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        userId: "owner-a",
+        leadId: "lead-a",
+        actorType: "SYSTEM",
+        source: "GMAIL",
+        title: "Conversation attached",
+        idempotencyKey: expect.stringMatching(
+          /^conversation-auto-link:conversation-\d+:lead-a$/,
+        ),
+      }),
+    );
+    expect(
       state.activities.filter((activity) => activity.type === "MESSAGE_RECEIVED"),
     ).toHaveLength(0);
 
@@ -472,6 +542,23 @@ describe("provider import pipeline", () => {
     expect(
       state.activities.filter((activity) => activity.type === "MESSAGE_RECEIVED"),
     ).toHaveLength(1);
+    expect(
+      state.activities.find(
+        (activity) => activity.type === "MESSAGE_RECEIVED",
+      ),
+    ).toEqual(
+      expect.objectContaining({
+        userId: "owner-a",
+        leadId: "lead-a",
+        actorType: "CONTACT",
+        source: "INBOX",
+        title: "New email received",
+        occurredAt: new Date("2026-07-23T10:00:00.000Z"),
+        idempotencyKey: expect.stringMatching(
+          /^message:message-\d+:INBOUND$/,
+        ),
+      }),
+    );
   });
 
   it("remains duplicate-safe when two imports start together", async () => {

@@ -2,8 +2,9 @@
 
 LeadHome treats provider adapters as normalization boundaries. Adapters return
 `NormalizedProviderAccount`, `NormalizedConversation`, and
-`NormalizedMessage`; the importer does not consume Gmail-, Outlook-, or
-fixture-specific payloads.
+`NormalizedMessage`; the importer does not consume Gmail- or fixture-specific
+payloads. Gmail and the development fixture provider are implemented. The
+schema reserves other provider values, but there is no Outlook adapter.
 
 ## Field ownership
 
@@ -38,11 +39,17 @@ detached conversations are never silently changed.
 
 ## Timeline policy
 
-The importer uses Policy A. A conversation's first successful import establishes
-a silent historical baseline. Historical messages remain in `Message` but do
-not flood `LeadActivity`. Messages first observed on later imports can create
-one body-free activity reference when the conversation is already attached.
-The database prevents duplicate message activities.
+The first successful import that creates a conversation records one idempotent,
+body-free `CONVERSATION_IMPORTED` event and establishes a silent
+message-history baseline. Historical messages remain in `Message` without
+flooding the activity timeline. Messages first observed on later imports create
+one inbound or outbound event when the conversation is attached to a lead. The
+event uses the provider message timestamp and never copies the message body.
+
+Conversation-import, message, and automatic-link events use deterministic
+idempotency keys. The message/type database constraint provides an additional
+duplicate guard, so retries and overlapping imports cannot duplicate timeline
+events.
 
 ## Website notification extension
 

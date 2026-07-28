@@ -99,21 +99,22 @@ export async function invokeWorker(
   return body;
 }
 
-function waitForNextPoll(milliseconds, signal) {
+export function waitForNextPoll(milliseconds, signal) {
   return new Promise((resolve) => {
     if (signal.aborted) {
       resolve();
       return;
     }
-    const timeout = setTimeout(resolve, milliseconds);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timeout);
-        resolve();
-      },
-      { once: true },
-    );
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timeout = setTimeout(finish, milliseconds);
+    signal.addEventListener("abort", finish, { once: true });
   });
 }
 

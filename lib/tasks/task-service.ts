@@ -8,6 +8,9 @@ import type {
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { TaskInput } from "./task-validation";
+import { recordActivity } from "@/lib/activity-service";
+import { parseConversationAnalysisOutput } from "@/lib/ai/conversation-analysis/schema";
+import { z } from "zod";
 
 const taskSelect = {
   id: true,
@@ -138,6 +141,7 @@ async function recalculateLeadFollowUp(
   tx: Prisma.TransactionClient,
   leadId: string | null,
   ownerId: string,
+  taskId?: string | null,
 ) {
   if (!leadId) return;
   const [lead, earliest] = await Promise.all([
@@ -164,6 +168,24 @@ async function recalculateLeadFollowUp(
       where: { id: leadId },
       data: { nextFollowUpDate: next },
     });
+    await recordActivity(tx, {
+      ownerId,
+      leadId,
+      taskId: taskId ?? null,
+      type: "FOLLOW_UP_CHANGED",
+      actorType: "SYSTEM",
+      source: "TASK",
+      title: !next
+        ? "Follow-up cleared"
+        : lead.nextFollowUpDate
+          ? "Follow-up rescheduled"
+          : "Follow-up scheduled",
+      description: "Updated from open follow-up tasks",
+      metadata: {
+        from: lead.nextFollowUpDate?.toISOString() ?? null,
+        to: next?.toISOString() ?? null,
+      },
+    });
   }
 }
 
@@ -173,6 +195,7 @@ async function activity(
   task: {
     id: string;
     leadId: string | null;
+    conversationId: string | null;
     title: string;
     type: TaskType;
     dueAt: Date | null;
@@ -187,28 +210,62 @@ async function activity(
   title: string,
   extra: Prisma.InputJsonObject = {},
 ) {
-  if (!task.leadId) return;
-  await tx.leadActivity.create({
-    data: {
-      leadId: task.leadId,
-      userId: ownerId,
-      type,
-      title,
-      description: task.title,
-      metadata: {
-        taskId: task.id,
-        taskTitle: task.title,
-        taskType: task.type,
-        dueAt: task.dueAt?.toISOString() ?? null,
-        ...extra,
-      },
+  await recordActivity(tx, {
+    ownerId,
+    leadId: task.leadId,
+    conversationId: task.conversationId,
+    taskId: task.id,
+    type,
+    actorType: "USER",
+    source: "TASK",
+    title,
+    description: task.title,
+    metadata: {
+      taskTitle: task.title,
+      taskType: task.type,
+      dueAt: task.dueAt?.toISOString() ?? null,
+      ...extra,
     },
   });
 }
 
-export async function createTask(ownerId: string, input: TaskInput) {
+const analysisProvenanceSchema = z.object({
+  analysisId: z.string().cuid(),
+  itemIndex: z.coerce.number().int().min(0).max(7),
+});
+
+export async function createTask(
+  ownerId: string,
+  input: TaskInput,
+  rawProvenance?: { analysisId?: string; itemIndex?: string },
+) {
   return prisma.$transaction(async (tx) => {
     await validateRelations(tx, ownerId, input);
+    const parsedProvenance = analysisProvenanceSchema.safeParse(rawProvenance);
+    const provenance = parsedProvenance.success
+      ? await tx.conversationAnalysis.findFirst({
+          where: { id: parsedProvenance.data.analysisId, ownerId },
+          select: { id: true, structuredData: true },
+        })
+      : null;
+    const provenanceOutput = provenance?.structuredData
+      ? (() => {
+          try {
+            return parseConversationAnalysisOutput(provenance.structuredData);
+          } catch {
+            return null;
+          }
+        })()
+      : null;
+    const acceptedSuggestion =
+      parsedProvenance.success &&
+      provenance &&
+      provenanceOutput?.actionItems[parsedProvenance.data.itemIndex]
+        ? {
+            analysisId: provenance.id,
+            itemIndex: parsedProvenance.data.itemIndex,
+          }
+        : null;
     const created = await tx.task.create({
       data: {
         ownerId,
@@ -222,11 +279,18 @@ export async function createTask(ownerId: string, input: TaskInput) {
         leadId: input.leadId,
         conversationId: input.conversationId,
       },
-      select: { ...taskSelect, leadId: true },
+      select: { ...taskSelect, leadId: true, conversationId: true },
     });
-    await activity(tx, ownerId, created, "TASK_CREATED", "Task created");
+    await activity(
+      tx,
+      ownerId,
+      created,
+      "TASK_CREATED",
+      acceptedSuggestion ? "Task created from AI suggestion" : "Task created",
+      acceptedSuggestion ? { aiSuggestion: acceptedSuggestion } : {},
+    );
     if (created.type === "FOLLOW_UP") {
-      await recalculateLeadFollowUp(tx, created.leadId, ownerId);
+      await recalculateLeadFollowUp(tx, created.leadId, ownerId, created.id);
     }
     return { kind: "changed" as const, task: dto(created) };
   });
@@ -271,7 +335,7 @@ export async function updateTask(
         leadId: input.leadId,
         conversationId: input.conversationId,
       },
-      select: { ...taskSelect, leadId: true },
+      select: { ...taskSelect, leadId: true, conversationId: true },
     });
     await activity(tx, ownerId, updated, "TASK_UPDATED", "Task updated");
     const affected = new Set(
@@ -281,7 +345,12 @@ export async function updateTask(
       ].filter((id): id is string => Boolean(id)),
     );
     for (const leadId of affected) {
-      await recalculateLeadFollowUp(tx, leadId, ownerId);
+      await recalculateLeadFollowUp(
+        tx,
+        leadId,
+        ownerId,
+        updated.leadId === leadId ? updated.id : null,
+      );
     }
     return { kind: "changed" as const, task: dto(updated) };
   });
@@ -297,7 +366,7 @@ async function transitionTask(
   return prisma.$transaction(async (tx) => {
     const previous = await tx.task.findFirst({
       where: { id: taskId, ownerId },
-      select: { ...taskSelect, leadId: true },
+      select: { ...taskSelect, leadId: true, conversationId: true },
     });
     if (!previous) return { kind: "not-found" as const };
     if (previous.status === status) {
@@ -309,14 +378,14 @@ async function transitionTask(
         status,
         completedAt: status === "COMPLETED" ? new Date() : null,
       },
-      select: { ...taskSelect, leadId: true },
+      select: { ...taskSelect, leadId: true, conversationId: true },
     });
     await activity(tx, ownerId, updated, event, eventTitle, {
       previousStatus: previous.status,
       newStatus: status,
     });
     if (updated.type === "FOLLOW_UP") {
-      await recalculateLeadFollowUp(tx, updated.leadId, ownerId);
+      await recalculateLeadFollowUp(tx, updated.leadId, ownerId, updated.id);
     }
     return { kind: "changed" as const, task: dto(updated) };
   });
@@ -338,7 +407,7 @@ export async function deleteTask(
   return prisma.$transaction(async (tx) => {
     const previous = await tx.task.findFirst({
       where: { id: taskId, ownerId },
-      select: { ...taskSelect, leadId: true },
+      select: { ...taskSelect, leadId: true, conversationId: true },
     });
     if (!previous) return { kind: "not-found" as const };
     await activity(tx, ownerId, previous, "TASK_DELETED", "Task deleted", {

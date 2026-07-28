@@ -14,6 +14,7 @@ import {
 import {
   enqueueConversationAnalysisAfterLeadLink,
 } from "@/lib/ai/conversation-analysis/job-service";
+import { recordActivity } from "@/lib/activity-service";
 
 const controlsSelect = {
   id: true,
@@ -103,6 +104,19 @@ async function updateField<
     });
     if (updated.count !== 1) throw new Error("Conversation was not updated.");
     const canonical = await readCanonical(tx, ownerId, conversationId);
+    if (field === "status") {
+      await recordActivity(tx, {
+        ownerId,
+        leadId: current.leadId,
+        conversationId,
+        type: "CONVERSATION_STATUS_CHANGED",
+        actorType: "USER",
+        source: "INBOX",
+        title: "Conversation status changed",
+        description: `${current.status.toLowerCase()} → ${canonical.status.toLowerCase()}`,
+        metadata: { from: current.status, to: canonical.status },
+      });
+    }
     if (canonical[field] !== value) {
       throw new Error("Persisted conversation does not match the requested value.");
     }
@@ -216,31 +230,45 @@ export async function updateConversationControls(input: {
     if (updated.count !== 1) throw new Error("Conversation was not updated.");
 
     if (leadChanged && current.leadId) {
-      await tx.leadActivity.create({
-        data: {
-          leadId: current.leadId,
-          userId: input.ownerId,
-          conversationId: input.conversationId,
-          type: "CONVERSATION_UNLINKED",
-          title: "Conversation unlinked",
-          description: current.subject ?? "No subject",
-        },
+      await recordActivity(tx, {
+        ownerId: input.ownerId,
+        leadId: current.leadId,
+        conversationId: input.conversationId,
+        type: "CONVERSATION_UNLINKED",
+        actorType: "USER",
+        source: "INBOX",
+        title: "Conversation detached",
+        description: current.subject ?? "No subject",
       });
     }
     if (leadChanged && input.leadId) {
-      await tx.leadActivity.create({
-        data: {
-          leadId: input.leadId,
-          userId: input.ownerId,
-          conversationId: input.conversationId,
-          type: "CONVERSATION_LINKED",
-          title: "Conversation attached",
-          description: current.subject ?? "No subject",
-        },
+      await recordActivity(tx, {
+        ownerId: input.ownerId,
+        leadId: input.leadId,
+        conversationId: input.conversationId,
+        type: "CONVERSATION_LINKED",
+        actorType: "USER",
+        source: "INBOX",
+        title: "Conversation attached",
+        description: current.subject ?? "No subject",
       });
       await tx.lead.update({
         where: { id: input.leadId },
         data: { updatedAt: new Date() },
+      });
+    }
+    if (statusChanged) {
+      const activityLeadId = input.leadId ?? current.leadId;
+      await recordActivity(tx, {
+        ownerId: input.ownerId,
+        leadId: activityLeadId,
+        conversationId: input.conversationId,
+        type: "CONVERSATION_STATUS_CHANGED",
+        actorType: "USER",
+        source: "INBOX",
+        title: "Conversation status changed",
+        description: `${current.status.toLowerCase()} → ${input.status.toLowerCase()}`,
+        metadata: { from: current.status, to: input.status },
       });
     }
 

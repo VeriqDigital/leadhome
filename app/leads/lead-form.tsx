@@ -13,9 +13,11 @@ import type {
 } from "@/lib/lead-types";
 import type { ActionState } from "@/lib/validation";
 
-export const canonicalFormValues = (
+export type LeadEditableFormValues = Omit<LeadFormValues, "nextFollowUp">;
+
+export const canonicalEditableFormValues = (
   lead?: LeadFormInput | CanonicalLead,
-): LeadFormValues => ({
+): LeadEditableFormValues => ({
   name: lead?.name ?? "",
   email: lead?.email ?? "",
   phone: lead?.phone ?? "",
@@ -24,8 +26,23 @@ export const canonicalFormValues = (
   status: lead?.status ?? "NEW",
   message: lead?.message ?? "",
   estimatedValue: lead?.estimatedValue ?? "",
+});
+
+export const canonicalFormValues = (
+  lead?: LeadFormInput | CanonicalLead,
+): LeadFormValues => ({
+  ...canonicalEditableFormValues(lead),
   nextFollowUp: lead?.nextFollowUp ?? "",
 });
+
+export const leadFormRenderValues = (
+  editable: LeadEditableFormValues,
+  lead?: LeadFormInput | CanonicalLead,
+): LeadFormValues => ({
+  ...editable,
+  nextFollowUp: lead?.nextFollowUp ?? "",
+});
+
 const initial: ActionState = {};
 export function SaveResultMessage({ state }: { state: ActionState }) {
   const tone = !state.success
@@ -64,8 +81,8 @@ export function LeadForm({
   submitLabel: string;
   extraFields?: React.ReactNode;
 }) {
-  const [fields, setFields] = useState<LeadFormValues>(() =>
-    canonicalFormValues(lead),
+  const [editableFields, setEditableFields] = useState<LeadEditableFormValues>(
+    () => canonicalEditableFormValues(lead),
   );
   const [state, formAction, actionPending] = useActionState(
     (previous: ActionState, data: FormData) => action(previous, data),
@@ -73,13 +90,10 @@ export function LeadForm({
   );
   const [transitionPending, startTransition] = useTransition();
   const pending = actionPending || transitionPending;
-  const [synchronizedLead, setSynchronizedLead] = useState(state.lead);
-  if (state.lead && state.lead !== synchronizedLead) {
-    setSynchronizedLead(state.lead);
-    setFields(canonicalFormValues(state.lead));
-  }
-  const update = (field: keyof LeadFormValues, value: string) => {
-    setFields((current) => ({ ...current, [field]: value }));
+  const fields = leadFormRenderValues(editableFields, lead);
+
+  const update = (field: keyof LeadEditableFormValues, value: string) => {
+    setEditableFields((current) => ({ ...current, [field]: value }));
   };
   return (
     <form

@@ -8,6 +8,7 @@ import type {
   NormalizedConversation,
   NormalizedMessage,
 } from "./provider";
+import { recordActivities, recordActivity } from "@/lib/activity-service";
 
 export type ImportSummary = {
   accountsProcessed: number;
@@ -260,6 +261,21 @@ async function importConversation({
         providerMetadata: normalized.metadata,
       },
     });
+    if (!existing) {
+      await recordActivity(tx, {
+        ownerId,
+        conversationId: conversation.id,
+        type: "CONVERSATION_IMPORTED",
+        actorType: "SYSTEM",
+        source: provider.provider === "GMAIL" ? "GMAIL" : "INBOX",
+        title:
+          provider.provider === "GMAIL"
+            ? "Gmail conversation imported"
+            : "Conversation imported",
+        description: conversation.subject ?? "No subject",
+        idempotencyKey: `conversation-import:${provider.provider}:${account.id}:${conversation.id}`,
+      });
+    }
 
     const providerMessageIds = messages.map((message) => message.providerMessageId);
     const alreadyImported = providerMessageIds.length
@@ -325,12 +341,14 @@ async function importConversation({
           id: true,
           direction: true,
           subject: true,
+          receivedAt: true,
         },
       });
-      await tx.leadActivity.createMany({
-        data: createdMessages.map((message) => ({
-          leadId: conversation.leadId!,
-          userId: ownerId,
+      await recordActivities(
+        tx,
+        createdMessages.map((message) => ({
+          ownerId,
+          leadId: conversation.leadId,
           conversationId: conversation.id,
           messageId: message.id,
           type:
@@ -339,12 +357,21 @@ async function importConversation({
               : ("MESSAGE_SENT" as const),
           title:
             message.direction === "INBOUND"
-              ? "Message received"
-              : "Message sent",
+              ? "New email received"
+              : "Email sent",
           description: message.subject ?? "No subject",
+          actorType:
+            message.direction === "INBOUND"
+              ? ("CONTACT" as const)
+              : ("USER" as const),
+          source:
+            provider.provider === "GMAIL"
+              ? ("GMAIL" as const)
+              : ("INBOX" as const),
+          occurredAt: message.receivedAt,
+          idempotencyKey: `message:${message.id}:${message.direction}`,
         })),
-        skipDuplicates: true,
-      });
+      );
     }
 
     if (!conversation.baselineImportedAt) {
@@ -437,16 +464,17 @@ async function applyMatch({
       data: { leadId: match.leadId, reviewState: "MATCHED" },
     });
     if (attached.count) {
-      await tx.leadActivity.create({
-        data: {
-          leadId: match.leadId,
-          userId: ownerId,
-          conversationId,
-          type: "CONVERSATION_LINKED",
-          title: "Conversation attached",
-          description: current.subject ?? "No subject",
-          metadata: { reason: match.reason, automatic: true },
-        },
+      await recordActivity(tx, {
+        ownerId,
+        leadId: match.leadId,
+        conversationId,
+        type: "CONVERSATION_LINKED",
+        actorType: "SYSTEM",
+        source: "GMAIL",
+        title: "Conversation attached",
+        description: current.subject ?? "No subject",
+        metadata: { reason: match.reason, automatic: true },
+        idempotencyKey: `conversation-auto-link:${conversationId}:${match.leadId}`,
       });
       await tx.lead.update({
         where: { id: match.leadId },

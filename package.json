@@ -2,12 +2,18 @@
   "name": "leadmax",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "test:browser:firefox": "node scripts/lead-detail-browser.mjs firefox",
+    "test:browser:firefox:normal": "node scripts/lead-detail-browser.mjs firefox-normal",
+    "test:browser:chrome": "node scripts/lead-detail-browser.mjs chrome",
     "typecheck": "tsc --noEmit",
     "validate": "npm run db:validate && npm run lint && npm run typecheck && npm test",
     "db:generate": "prisma generate",
@@ -39,6 +45,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.11",
+    "selenium-webdriver": "^4.46.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^3.2.4"

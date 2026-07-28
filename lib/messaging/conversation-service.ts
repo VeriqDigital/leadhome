@@ -10,6 +10,7 @@ import { prisma } from "@/lib/prisma";
 import {
   enqueueConversationAnalysisAfterLeadLink,
 } from "@/lib/ai/conversation-analysis/job-service";
+import { recordActivity } from "@/lib/activity-service";
 
 export type CreateConversationInput = {
   ownerId: string;
@@ -58,7 +59,7 @@ export async function createMessage(input: CreateMessageInput) {
   return prisma.$transaction(async (tx) => {
     const conversation = await tx.conversation.findFirst({
       where: { id: input.conversationId, ownerId: input.ownerId },
-      select: { id: true, accountId: true, leadId: true },
+      select: { id: true, accountId: true, leadId: true, provider: true },
     });
     if (!conversation) throw new Error("Conversation not found.");
 
@@ -80,16 +81,18 @@ export async function createMessage(input: CreateMessageInput) {
       },
     });
     if (conversation.leadId) {
-      await tx.leadActivity.create({
-        data: {
-          leadId: conversation.leadId,
-          userId: input.ownerId,
-          conversationId: conversation.id,
-          messageId: message.id,
-          type: input.direction === "INBOUND" ? "MESSAGE_RECEIVED" : "MESSAGE_SENT",
-          title: input.direction === "INBOUND" ? "Message received" : "Message sent",
-          description: input.subject ?? "No subject",
-        },
+      await recordActivity(tx, {
+        ownerId: input.ownerId,
+        leadId: conversation.leadId,
+        conversationId: conversation.id,
+        messageId: message.id,
+        type: input.direction === "INBOUND" ? "MESSAGE_RECEIVED" : "MESSAGE_SENT",
+        actorType: input.direction === "INBOUND" ? "CONTACT" : "USER",
+        source: conversation.provider === "GMAIL" ? "GMAIL" : "INBOX",
+        title: input.direction === "INBOUND" ? "New email received" : "Email sent",
+        description: input.subject ?? "No subject",
+        occurredAt: input.receivedAt,
+        idempotencyKey: `message:${message.id}:${input.direction}`,
       });
     }
     return message;
@@ -119,15 +122,15 @@ export async function attachConversationToLead({
     }
 
     if (conversation.leadId) {
-      await tx.leadActivity.create({
-        data: {
-          leadId: conversation.leadId,
-          userId: ownerId,
-          conversationId,
-          type: "CONVERSATION_UNLINKED",
-          title: "Conversation unlinked",
-          description: conversation.subject ?? "No subject",
-        },
+      await recordActivity(tx, {
+        ownerId,
+        leadId: conversation.leadId,
+        conversationId,
+        type: "CONVERSATION_UNLINKED",
+        actorType: "USER",
+        source: "INBOX",
+        title: "Conversation detached",
+        description: conversation.subject ?? "No subject",
       });
     }
     const updated = await tx.conversation.update({
@@ -140,15 +143,15 @@ export async function attachConversationToLead({
         matchReason: "manually attached",
       },
     });
-    await tx.leadActivity.create({
-      data: {
-        leadId,
-        userId: ownerId,
-        conversationId,
-        type: "CONVERSATION_LINKED",
-        title: "Conversation attached",
-        description: conversation.subject ?? "No subject",
-      },
+    await recordActivity(tx, {
+      ownerId,
+      leadId,
+      conversationId,
+      type: "CONVERSATION_LINKED",
+      actorType: "USER",
+      source: "INBOX",
+      title: "Conversation attached",
+      description: conversation.subject ?? "No subject",
     });
     await tx.lead.update({
       where: { id: leadId },
@@ -187,15 +190,15 @@ export async function detachConversation({
         matchReason: "conversation was manually detached",
       },
     });
-    await tx.leadActivity.create({
-      data: {
-        leadId: conversation.leadId,
-        userId: ownerId,
-        conversationId,
-        type: "CONVERSATION_UNLINKED",
-        title: "Conversation unlinked",
-        description: conversation.subject ?? "No subject",
-      },
+    await recordActivity(tx, {
+      ownerId,
+      leadId: conversation.leadId,
+      conversationId,
+      type: "CONVERSATION_UNLINKED",
+      actorType: "USER",
+      source: "INBOX",
+      title: "Conversation detached",
+      description: conversation.subject ?? "No subject",
     });
     return updated;
   });

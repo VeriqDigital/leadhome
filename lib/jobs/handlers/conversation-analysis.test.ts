@@ -20,6 +20,10 @@ const mocks = vi.hoisted(() => ({
   withLease: vi.fn(),
   updateAnalyses: vi.fn(),
   updateJob: vi.fn(),
+  findConversation: vi.fn(),
+  findLeads: vi.fn(),
+  findConversations: vi.fn(),
+  createActivities: vi.fn(),
   config: vi.fn(),
   log: vi.fn(),
   revalidatePath: vi.fn(),
@@ -204,6 +208,15 @@ beforeEach(() => {
   mocks.heartbeat.mockResolvedValue("ok");
   mocks.updateAnalyses.mockResolvedValue({ count: 1 });
   mocks.updateJob.mockResolvedValue({});
+  mocks.findConversation.mockResolvedValue({
+    id: conversationId,
+    leadId: "lead-a",
+  });
+  mocks.findLeads.mockResolvedValue([{ id: "lead-a" }]);
+  mocks.findConversations.mockResolvedValue([
+    { id: conversationId, leadId: "lead-a" },
+  ]);
+  mocks.createActivities.mockResolvedValue({ count: 1 });
   mocks.withLease.mockImplementation(
     async (
       _jobId: string,
@@ -217,6 +230,16 @@ beforeEach(() => {
         },
         job: {
           update: mocks.updateJob,
+        },
+        lead: {
+          findMany: mocks.findLeads,
+        },
+        conversation: {
+          findFirst: mocks.findConversation,
+          findMany: mocks.findConversations,
+        },
+        leadActivity: {
+          createMany: mocks.createActivities,
         },
       }),
     }),
@@ -271,6 +294,33 @@ describe("conversation analysis job handler", () => {
         lastErrorCode: null,
         lastErrorMessage: null,
       }),
+    });
+    expect(mocks.findConversation).toHaveBeenCalledWith({
+      where: {
+        id: conversationId,
+        ownerId: "owner-a",
+      },
+      select: { id: true, leadId: true },
+    });
+    expect(mocks.createActivities).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          leadId: "lead-a",
+          conversationId,
+          type: "AI_ANALYSIS_COMPLETED",
+          actorType: "AI",
+          source: "AI",
+          title: "Conversation analysis completed",
+          metadata: {
+            analysisId,
+            actionItemCount: 1,
+            inputTruncated: false,
+          },
+          idempotencyKey: `analysis-completed:${analysisId}:${jobId}`,
+          occurredAt: expect.any(Date),
+        }),
+      ],
+      skipDuplicates: true,
     });
     expect(mocks.heartbeat.mock.calls.map((call) => call[2].phase)).toEqual([
       "PREPARING",
@@ -477,5 +527,6 @@ describe("conversation analysis job handler", () => {
     expect(provider.analyze).not.toHaveBeenCalled();
     expect(mocks.withLease).not.toHaveBeenCalled();
     expect(mocks.heartbeat).toHaveBeenCalledTimes(1);
+    expect(mocks.createActivities).not.toHaveBeenCalled();
   });
 });

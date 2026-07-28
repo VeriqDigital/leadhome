@@ -118,26 +118,35 @@ model Lead {
 }
 
 model LeadActivity {
-  id             String           @id @default(cuid())
-  leadId         String
+  id             String                @id @default(cuid())
+  leadId         String?
   userId         String
+  conversationId String?
+  messageId      String?
+  taskId         String?
   type           LeadActivityType
+  actorType      LeadActivityActorType @default(SYSTEM)
+  source         LeadActivitySource    @default(SYSTEM)
   title          String
   description    String?
   metadata       Json?
-  conversationId String?
-  messageId      String?
-  createdAt      DateTime         @default(now())
-  lead           Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  conversation   Conversation?    @relation(fields: [conversationId], references: [id], onDelete: SetNull)
-  message        Message?         @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  occurredAt     DateTime              @default(now())
+  idempotencyKey String?
+  createdAt      DateTime              @default(now())
+  lead           Lead?                 @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  user           User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversation   Conversation?         @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  message        Message?              @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  task           Task?                 @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
   @@unique([messageId, type])
-  @@index([leadId, createdAt])
-  @@index([userId, createdAt])
-  @@index([conversationId, createdAt])
-  @@index([messageId, createdAt])
+  @@unique([userId, idempotencyKey])
+  @@index([leadId, occurredAt, id])
+  @@index([userId, occurredAt, id])
+  @@index([conversationId, occurredAt, id])
+  @@index([taskId, occurredAt, id])
+  @@index([userId, type, occurredAt, id])
+  @@index([messageId, occurredAt])
 }
 
 model CommunicationAccount {
@@ -259,22 +268,23 @@ model Message {
 }
 
 model Task {
-  id             String        @id @default(cuid())
+  id             String         @id @default(cuid())
   ownerId        String
-  owner          User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  owner          User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   leadId         String?
-  lead           Lead?         @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  lead           Lead?          @relation(fields: [leadId], references: [id], onDelete: SetNull)
   conversationId String?
-  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  conversation   Conversation?  @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  activities     LeadActivity[]
   title          String
   description    String?
-  type           TaskType      @default(GENERAL)
-  priority       TaskPriority  @default(NORMAL)
-  status         TaskStatus    @default(OPEN)
+  type           TaskType       @default(GENERAL)
+  priority       TaskPriority   @default(NORMAL)
+  status         TaskStatus     @default(OPEN)
   dueAt          DateTime?
   completedAt    DateTime?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
 
   @@index([ownerId, status, dueAt, id])
   @@index([ownerId, type, dueAt])
@@ -366,6 +376,7 @@ enum LeadStatus {
 enum LeadActivityType {
   LEAD_CREATED
   WEBSITE_SUBMISSION_RECEIVED
+  CONVERSATION_IMPORTED
   STATUS_CHANGED
   ESTIMATED_VALUE_CHANGED
   FOLLOW_UP_CHANGED
@@ -377,12 +388,31 @@ enum LeadActivityType {
   MESSAGE_SENT
   CONVERSATION_LINKED
   CONVERSATION_UNLINKED
+  CONVERSATION_STATUS_CHANGED
+  AI_ANALYSIS_COMPLETED
   TASK_CREATED
   TASK_UPDATED
   TASK_COMPLETED
   TASK_REOPENED
   TASK_CANCELLED
   TASK_DELETED
+}
+
+enum LeadActivityActorType {
+  USER
+  CONTACT
+  SYSTEM
+  AI
+}
+
+enum LeadActivitySource {
+  MANUAL
+  WEBSITE
+  GMAIL
+  INBOX
+  TASK
+  AI
+  SYSTEM
 }
 
 enum MessageProvider {

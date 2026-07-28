@@ -36,8 +36,16 @@ again, when no token was granted or Google revoked access.
 ## Synchronization and operations
 
 Manual sync imports at most `GMAIL_SYNC_THREAD_LIMIT` threads (default 50,
-maximum 100) matching `newer_than:30d in:inbox -in:spam -in:trash`. Requests
-are paginated and thread fetches run five at a time. Run
+maximum 100) matching `newer_than:30d in:inbox -in:spam -in:trash`. The browser
+request enqueues an owner-scoped job; the existing worker performs Gmail
+requests and imports in the background. Requests are paginated and thread
+fetches run five at a time. Without a worker or production scheduler draining
+the queue, sync remains safely queued.
+
+Import records one idempotent conversation-import activity for a newly seen
+thread. Initial message history is a silent baseline; later new messages on an
+attached conversation create body-free activity using the Gmail message
+timestamp. Automatic lead attachment is recorded separately. Run
 `npx prisma migrate deploy` before deploying the application.
 
 The OAuth consent screen and sensitive/restricted-scope verification process

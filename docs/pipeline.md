@@ -7,7 +7,7 @@ or full activity histories to the browser.
 
 Each column initially returns 20 cards and can be expanded through a URL-backed
 per-column limit up to 100. A card includes identity, company, source, estimated
-value, next follow-up, the latest activity time, `updatedAt`, whether a
+value, next follow-up, the latest activity `occurredAt`, `updatedAt`, whether a
 conversation is attached, and bounded open-task summary data. Task details are
 limited to 50 open tasks per displayed lead; cards expose overdue/today counts,
 the next open task date, and whether an open follow-up task exists.
@@ -54,6 +54,6 @@ sorting. The migration is additive and does not modify earlier migrations.
 
 ## Intentionally deferred
 
-AI, email sending, proposal documents, automatic task creation, automatic lead
-creation, billing, teams, additional external providers, and advanced
-forecasting are outside this phase.
+Autonomous stage changes, automatic lead or task creation, email sending,
+proposal documents, billing, teams, additional external providers, and
+advanced forecasting remain outside the pipeline feature.

@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { invokeWorker, readWorkerConfig } from "./jobs-worker.mjs";
+import { getEventListeners } from "node:events";
+import {
+  invokeWorker,
+  readWorkerConfig,
+  waitForNextPoll,
+} from "./jobs-worker.mjs";
 
 const secret = "s".repeat(40);
 
@@ -131,5 +136,20 @@ describe("local jobs worker", () => {
         { fetchImpl },
       ),
     ).rejects.toThrow("Worker invocation failed.");
+  });
+
+  it("removes the shutdown listener after every completed poll delay", async () => {
+    vi.useFakeTimers();
+    const signal = new AbortController().signal;
+
+    for (let cycle = 0; cycle < 12; cycle += 1) {
+      const waiting = waitForNextPoll(5_000, signal);
+      expect(getEventListeners(signal, "abort")).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await waiting;
+      expect(getEventListeners(signal, "abort")).toHaveLength(0);
+    }
+
+    vi.useRealTimers();
   });
 });

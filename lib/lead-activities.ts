@@ -119,7 +119,7 @@ export async function getLeadActivitiesForUser({
 }) {
   return prisma.leadActivity.findMany({
     where: { leadId, userId, lead: { userId } },
-    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
     take: Math.min(Math.max(limit, 1), 100),
     select: {
       id: true,
@@ -127,7 +127,7 @@ export async function getLeadActivitiesForUser({
       title: true,
       description: true,
       metadata: true,
-      createdAt: true,
+      occurredAt: true,
     },
   });
 }

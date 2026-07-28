@@ -27,6 +27,8 @@ import {
 import { RecentLeads, type RecentLead } from "./recent-leads";
 import { completeTaskAction } from "./actions/task-actions";
 import { TaskDue } from "./tasks/task-due";
+import { getDashboardRecentActivities } from "@/lib/activity-service";
+import { RecentActivity } from "./recent-activity";
 
 const colors: Record<LeadStatus, string> = {
   NEW: "#8c83d9",
@@ -50,7 +52,14 @@ export default async function Home() {
     dueAt: true,
     lead: { select: { id: true, name: true } },
   } as const;
-  const [recent, leadMetrics, overdueTasks, todayTasks, upcomingTasks] =
+  const [
+    recent,
+    leadMetrics,
+    overdueTasks,
+    todayTasks,
+    upcomingTasks,
+    recentActivity,
+  ] =
     await Promise.all([
       prisma.lead.findMany({
         where: { userId: user.id },
@@ -80,6 +89,7 @@ export default async function Home() {
         take: 5,
         select: taskSelect,
       }),
+      getDashboardRecentActivities(user.id),
     ]);
   const {
     newCount,
@@ -189,6 +199,9 @@ export default async function Home() {
             action={<Link href="/tasks?view=today" className="text-xs text-[#606775]">View all</Link>}
           >
             <DashboardTasks tasks={todayTasks} now={now} empty="No tasks due today." />
+          </DashboardCard>
+          <DashboardCard title="Recent Activity">
+            <RecentActivity activities={recentActivity} now={now} />
           </DashboardCard>
         </div>
         <div className="grid gap-5">

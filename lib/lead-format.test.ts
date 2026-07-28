@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatCurrency,
   formatDateOnly,
+  formatDateInputValue,
   formatDateTime,
   formatRelativeTime,
   isLeadSource,
@@ -13,6 +14,8 @@ describe("lead formatting", () => {
     expect(formatCurrency("2500.50")).toBe("$2,500.5");
     expect(formatCurrency("not-a-number")).toBe("No value");
     expect(formatDateOnly("2026-07-24T23:59:00Z")).toBe("Jul 24, 2026");
+    expect(formatDateInputValue(new Date(2026, 7, 12, 12))).toBe("2026-08-12");
+    expect(formatDateInputValue(null)).toBeNull();
     expect(formatDateOnly("legacy")).toBe("No date");
     expect(formatDateTime(new Date("invalid"))).toBe("Unknown time");
     expect(formatRelativeTime(new Date("invalid"))).toBe("Unknown time");

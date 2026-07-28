@@ -13,6 +13,8 @@ import {
 import type { CanonicalLead } from "@/lib/lead-types";
 import { reportOperationalError } from "@/lib/server-errors";
 import { changeLeadStatusInTransaction } from "@/lib/pipeline/status-service";
+import { recordActivities, recordActivity } from "@/lib/activity-service";
+import { formatDateInputValue } from "@/lib/lead-format";
 
 function values(formData: FormData) {
   const message = formData.get("message");
@@ -52,7 +54,7 @@ function canonicalLead(lead: {
     source: lead.source,
     status: lead.status,
     estimatedValue: lead.estimatedValue?.toString() ?? null,
-    nextFollowUp: lead.nextFollowUpDate?.toISOString().slice(0, 10) ?? null,
+    nextFollowUp: formatDateInputValue(lead.nextFollowUpDate),
     message: lead.message,
     updatedAt: lead.updatedAt.toISOString(),
   };
@@ -85,14 +87,14 @@ export async function createLeadAction(
         data: { ...parsed.data, userId: user.id },
         select: { id: true },
       });
-      await tx.leadActivity.create({
-        data: {
-          leadId: lead.id,
-          userId: user.id,
-          type: "LEAD_CREATED",
-          title: "Lead created",
-          description: "Created manually",
-        },
+      await recordActivity(tx, {
+        ownerId: user.id,
+        leadId: lead.id,
+        type: "LEAD_CREATED",
+        actorType: "USER",
+        source: "MANUAL",
+        title: "Lead created",
+        description: "Created manually",
       });
       return lead.id;
     });
@@ -127,9 +129,16 @@ export async function updateLeadAction(
       });
       if (!previous) return { kind: "not-found" as const };
 
-      const activities = buildLeadUpdateActivities(previous, parsed.data).filter(
-        (activity) => activity.type !== "STATUS_CHANGED",
-      );
+      const canonicalInput = {
+        ...parsed.data,
+        // Open follow-up tasks are the source of truth. Never let a stale or
+        // tampered read-only form field overwrite their derived summary.
+        nextFollowUpDate: previous.nextFollowUpDate,
+      };
+      const activities = buildLeadUpdateActivities(
+        previous,
+        canonicalInput,
+      ).filter((activity) => activity.type !== "STATUS_CHANGED");
       const statusChanged = previous.status !== parsed.data.status;
       if (!activities.length && !statusChanged) {
         return {
@@ -157,20 +166,22 @@ export async function updateLeadAction(
         source: parsed.data.source,
         message: parsed.data.message,
         estimatedValue: parsed.data.estimatedValue,
-        nextFollowUpDate: parsed.data.nextFollowUpDate,
       };
       const updated = activities.length
         ? await tx.lead.update({ where: { id }, data: nonStatusData })
         : await tx.lead.findFirst({ where: { id, userId: user.id } });
       if (!updated) return { kind: "not-found" as const };
       if (activities.length) {
-        await tx.leadActivity.createMany({
-          data: activities.map((activity) => ({
+        await recordActivities(
+          tx,
+          activities.map((activity) => ({
             ...activity,
             leadId: id,
-            userId: user.id,
+            ownerId: user.id,
+            actorType: "USER" as const,
+            source: "MANUAL" as const,
           })),
-        });
+        );
       }
       return {
         kind: "changed" as const,

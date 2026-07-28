@@ -18,8 +18,9 @@ already-applied transition is a no-op.
 
 Date-only tasks are submitted as `YYYY-MM-DD` and stored at local noon to
 preserve their calendar day. Date-and-time inputs are converted to ISO by the
-browser before submission and stored as timestamps. Display formatting uses the
-browser timezone. An open task with `dueAt` before the current time is overdue.
+browser before submission and stored as timestamps. Task due labels are
+server-rendered so persisted dates do not produce server/client hydration
+differences. An open task with `dueAt` before the current time is overdue.
 
 ## Follow-up summary
 
@@ -29,12 +30,39 @@ lead's open `FOLLOW_UP` tasks. Task creation, editing, movement, completion,
 reopening, cancellation, and deletion recalculate affected leads
 transactionally. Other task types do not change the summary.
 
+On the lead detail page, "Next follow-up" is a read-only view of that derived
+summary. A successful task mutation completes its transaction before the
+literal `/leads/<id>` route is revalidated once. The server-rendered task list
+and timeline therefore return with the new data. The lead form keeps local
+state only for editable CRM values and composes "Next follow-up" directly from
+the current server prop. A revalidated result updates that read-only field
+immediately while preserving unsaved edits, without a synchronization effect,
+render-time state update, repeated refresh, poll, navigation, or write.
+
+Lead edits ignore the submitted read-only follow-up value, including stale or
+tampered values. Only task recalculation can update `Lead.nextFollowUpDate`.
+
+After a successful task creation, the form remounts its field group using the
+created task ID. Title, priority, due date/time, conversation, notes, status,
+and one-use AI provenance are cleared so a second task can be submitted
+immediately. A lead-detail follow-up form deliberately preserves its initial
+lead ID and `FOLLOW_UP` type across that reset; the next task therefore remains
+linked to the lead and still participates in follow-up recalculation. Starting
+new input acknowledges and clears the previous success message.
+
 ## Activity and dashboard behavior
 
-Lead-linked task mutations write safe summary activities without copying task
-notes. Conversation-only tasks do not create invalid lead activity. Deletion
-preserves a historical task-deleted activity before removing the operational
-record.
+Task creation, meaningful edits, completion, reopening, cancellation, and
+deletion write safe summary activities without copying task notes. Activities
+use typed task, lead, and conversation links when those relationships exist;
+standalone and conversation-only tasks are valid activity subjects. Deletion
+records the event before removing the operational task, after which the
+activity's task relation becomes null and its history remains.
+
+Follow-up recalculation records a separate system activity when it changes a
+lead's summarized next follow-up. Both the task mutation and summary update
+remain in the same transaction. Repeating a no-op transition does not add
+another task or activity record and does not trigger route revalidation.
 
 The Dashboard uses bounded owner-scoped queries: up to five overdue tasks, five
 due-today tasks, and five upcoming tasks. "Needs Follow-up" counts distinct
@@ -51,6 +79,11 @@ email matches require choosing between attaching the existing lead, creating a
 separate lead, or cancelling. Creation and attachment occur in one transaction
 and never alter message history.
 
-This phase does not add AI task creation, automatic lead or task creation,
-email sending, Gmail modification, background synchronization, calendar
-integration, browser notifications, pipeline drag-and-drop, teams, or billing.
+Conversation Intelligence suggestions can prefill the normal task form. The
+service revalidates the owned analysis and suggestion when the user explicitly
+saves, then records that the task came from an AI suggestion. AI never creates
+a task automatically.
+
+Email sending, Gmail modification, calendar integration, browser
+notifications, autonomous lead or task creation, teams, and billing remain
+outside the current task feature.

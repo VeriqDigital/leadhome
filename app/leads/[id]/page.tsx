@@ -3,8 +3,8 @@ import { notFound } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-user";
-import { getLeadActivitiesForUser } from "@/lib/lead-activities";
-import { formatDate } from "@/lib/lead-format";
+import { getLeadActivityPage } from "@/lib/activity-service";
+import { formatDate, formatDateInputValue } from "@/lib/lead-format";
 import { deleteLeadAction, updateLeadAction } from "../../actions/lead-actions";
 import { createTaskAction } from "../../actions/task-actions";
 import { ActivityTimeline } from "../activity-timeline";
@@ -20,10 +20,13 @@ export default async function LeadDetailPage({
 }) {
   const user = await requireUser();
   const { id } = await params;
+  const timelineNow = new Date();
+  const timelineTimeZone =
+    Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const lead = await prisma.lead.findFirst({ where: { id, userId: user.id } });
   if (!lead) notFound();
-  const [activities, tasks, conversations] = await Promise.all([
-    getLeadActivitiesForUser({ leadId: lead.id, userId: user.id }),
+  const [activityPage, tasks, conversations] = await Promise.all([
+    getLeadActivityPage({ leadId: lead.id, ownerId: user.id }),
     prisma.task.findMany({
       where: { ownerId: user.id, leadId: lead.id, status: { not: "CANCELLED" } },
       orderBy: [
@@ -77,8 +80,7 @@ export default async function LeadDetailPage({
             lead={{
               ...lead,
               estimatedValue: lead.estimatedValue?.toString() ?? null,
-              nextFollowUp:
-                lead.nextFollowUpDate?.toISOString().slice(0, 10) ?? null,
+              nextFollowUp: formatDateInputValue(lead.nextFollowUpDate),
             }}
           />
           <section className="mt-10 border-t border-black/[0.07] pt-8">
@@ -134,7 +136,13 @@ export default async function LeadDetailPage({
             </details>
           </section>
         </section>
-        <ActivityTimeline activities={activities} />
+        <ActivityTimeline
+          activities={activityPage?.items ?? []}
+          nextCursor={activityPage?.nextCursor ?? null}
+          leadId={lead.id}
+          now={timelineNow.toISOString()}
+          timeZone={timelineTimeZone}
+        />
       </div>
     </div>
   );

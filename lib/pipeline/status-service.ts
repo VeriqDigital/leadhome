@@ -3,6 +3,7 @@ import "server-only";
 import type { LeadStatus, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { statusLabels } from "@/lib/lead-format";
+import { recordActivity } from "@/lib/activity-service";
 
 const canonicalSelect = {
   id: true,
@@ -56,15 +57,15 @@ export async function changeLeadStatusInTransaction(
     data: { status },
   });
   if (updated.count !== 1) return { kind: "not-found" };
-  await tx.leadActivity.create({
-    data: {
-      leadId,
-      userId: ownerId,
-      type: "STATUS_CHANGED",
-      title: "Status changed",
-      description: `${statusLabels[previous.status]} → ${statusLabels[status]}`,
-      metadata: { from: previous.status, to: status },
-    },
+  await recordActivity(tx, {
+    ownerId,
+    leadId,
+    type: "STATUS_CHANGED",
+    actorType: "USER",
+    source: "MANUAL",
+    title: "Status changed",
+    description: `${statusLabels[previous.status]} → ${statusLabels[status]}`,
+    metadata: { from: previous.status, to: status },
   });
   const canonical = await tx.lead.findFirst({
     where: { id: leadId, userId: ownerId },

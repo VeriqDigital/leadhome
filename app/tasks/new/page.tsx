@@ -84,6 +84,11 @@ export default async function NewTaskPage({
           action={createTaskAction}
           leads={leadOptions}
           conversations={conversationOptions}
+          provenance={
+            analysisPrefill && params.analysis && params.item
+              ? { analysisId: params.analysis, itemIndex: params.item }
+              : undefined
+          }
           initial={
             analysisPrefill ?? {
               title: params.title,

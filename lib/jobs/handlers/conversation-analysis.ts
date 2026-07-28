@@ -31,6 +31,7 @@ import {
   conversationAnalysisJobPayloadSchema,
   conversationAnalysisJobResultSchema,
 } from "@/lib/jobs/validation";
+import { recordActivity } from "@/lib/activity-service";
 
 function assertLeaseMutation(result: { kind: "ok" | "cancelled" | "lost" }) {
   if (result.kind === "cancelled") throw new JobCancelledError();
@@ -410,6 +411,31 @@ export async function runConversationAnalysisJob(
         },
       });
       if (updated.count !== 1) throw new JobLeaseLostError();
+      const conversation = await tx.conversation.findFirst({
+        where: {
+          id: payload.data.conversationId,
+          ownerId: job.ownerId,
+        },
+        select: { id: true, leadId: true },
+      });
+      if (!conversation) throw new JobLeaseLostError();
+      await recordActivity(tx, {
+        ownerId: job.ownerId,
+        leadId: conversation.leadId,
+        conversationId: conversation.id,
+        type: "AI_ANALYSIS_COMPLETED",
+        actorType: "AI",
+        source: "AI",
+        title: "Conversation analysis completed",
+        description: "Summary and suggested next steps are ready.",
+        metadata: {
+          analysisId: analysis.id,
+          actionItemCount: structured.actionItems.length,
+          inputTruncated: prepared.inputTruncated,
+        },
+        occurredAt: completedAt,
+        idempotencyKey: `analysis-completed:${analysis.id}:${job.id}`,
+      });
     });
     assertLeaseMutation(persisted);
     logJobEvent("analysis_completed", {
@@ -425,6 +451,8 @@ export async function runConversationAnalysisJob(
       inputTruncated: prepared.inputTruncated,
     });
     revalidatePath("/inbox");
+    revalidatePath("/");
+    if (source.leadId) revalidatePath(`/leads/${source.leadId}`);
     return completedResult;
   } catch (error) {
     if (

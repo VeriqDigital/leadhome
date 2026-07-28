@@ -44,7 +44,8 @@ The feature adds `CONVERSATION_ANALYSIS` to the existing generic `Job` queue:
 6. The provider receives strict system instructions and bounded conversation
    data through the Responses API with Structured Outputs.
 7. Zod validates the parsed response and every evidence ordinal.
-8. A lease-fenced write replaces the one canonical current analysis.
+8. A lease-fenced transaction replaces the one canonical current analysis and
+   records one idempotent `AI_ANALYSIS_COMPLETED` activity.
 9. The Job stores only a bounded operational result.
 
 The payload contains only:
@@ -166,8 +167,16 @@ and disclosures make no additional OpenAI requests.
 
 Suggested actions continue to pass only the analysis ID and bounded action
 index into the owner-scoped task-prefill flow. Opening that form does not
-create a Task; the user must review the fields and explicitly save it. No
-completed-analysis presentation action mutates a Lead.
+create a Task; the user must review the fields and explicitly save it. On save,
+the task service rereads the owned analysis and suggestion and records the
+validated AI provenance in the task-created activity. No completed-analysis
+presentation action mutates a Lead.
+
+Successful completion activity uses the analysis completion time, actor `AI`,
+source `AI`, and a job/analysis-derived idempotency key. It contains only safe
+operational metadata such as the analysis ID, action-item count, and input
+truncation flag. It does not copy the summary, extracted contacts, suggested
+actions, evidence, or message text into activity metadata.
 
 ## Canonical persistence and retention
 
@@ -228,6 +237,8 @@ user-visible metadata.
 
 The Inbox exposes explicit Analyze, queued, running, Reanalyze, and retry
 states. Reanalysis always queues background work and returns promptly.
+Queued, skipped, failed, and cancelled attempts do not create timeline events;
+only a successfully persisted canonical analysis does.
 
 ## Local development and production
 

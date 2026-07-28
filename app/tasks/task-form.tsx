@@ -16,6 +16,29 @@ export function taskFieldResetKey(
     : undefined;
 }
 
+type TaskFormInitial = {
+  title?: string;
+  description?: string | null;
+  type?: TaskType;
+  priority?: TaskPriority;
+  status?: "OPEN" | "COMPLETED" | "CANCELLED";
+  dueAt?: Date | null;
+  leadId?: string | null;
+  conversationId?: string | null;
+};
+
+export function taskFieldInitialAfterSubmission(
+  state: TaskActionState,
+  submitLabel: string,
+  initial?: TaskFormInitial,
+): TaskFormInitial | undefined {
+  if (!taskFieldResetKey(state, submitLabel)) return initial;
+  return {
+    leadId: initial?.leadId,
+    type: initial?.type,
+  };
+}
+
 export function shouldShowTaskMessage(
   state: TaskActionState,
   acknowledgedTaskId?: string,
@@ -30,6 +53,7 @@ export function TaskForm({
   leads,
   conversations,
   initial,
+  provenance,
   submitLabel = "Create task",
 }: {
   action: (
@@ -38,22 +62,21 @@ export function TaskForm({
   ) => Promise<TaskActionState>;
   leads: Option[];
   conversations: ConversationOption[];
-  initial?: {
-    title?: string;
-    description?: string | null;
-    type?: TaskType;
-    priority?: TaskPriority;
-    status?: "OPEN" | "COMPLETED" | "CANCELLED";
-    dueAt?: Date | null;
-    leadId?: string | null;
-    conversationId?: string | null;
+  initial?: TaskFormInitial;
+  provenance?: {
+    analysisId: string;
+    itemIndex: string;
   };
   submitLabel?: string;
 }) {
   const [state, formAction, pending] = useActionState(action, {});
   const [acknowledgedTaskId, setAcknowledgedTaskId] = useState<string>();
   const resetAfterCreation = taskFieldResetKey(state, submitLabel);
-  const fieldInitial = resetAfterCreation ? undefined : initial;
+  const fieldInitial = taskFieldInitialAfterSubmission(
+    state,
+    submitLabel,
+    initial,
+  );
   const dueDate = fieldInitial?.dueAt
     ? `${fieldInitial.dueAt.getFullYear()}-${String(fieldInitial.dueAt.getMonth() + 1).padStart(2, "0")}-${String(fieldInitial.dueAt.getDate()).padStart(2, "0")}`
     : "";
@@ -86,6 +109,12 @@ export function TaskForm({
       className="grid gap-4"
     >
       <div key={resetAfterCreation ?? "task-fields"} className="contents">
+        {!resetAfterCreation && provenance && (
+          <>
+            <input type="hidden" name="analysisId" value={provenance.analysisId} />
+            <input type="hidden" name="analysisItem" value={provenance.itemIndex} />
+          </>
+        )}
         <label className="grid min-w-0 gap-1.5 text-sm font-medium">
           Title
           <input

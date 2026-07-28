@@ -44,7 +44,10 @@ export async function createTaskAction(
   }
   const user = await requireUser();
   try {
-    const result = await createTask(user.id, parsed.data);
+    const result = await createTask(user.id, parsed.data, {
+      analysisId: String(formData.get("analysisId") ?? ""),
+      itemIndex: String(formData.get("analysisItem") ?? ""),
+    });
     revalidateTaskPaths(parsed.data.leadId);
     return {
       success: true,

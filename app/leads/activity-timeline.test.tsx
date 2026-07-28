@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import {
@@ -6,7 +7,7 @@ import {
   type TimelineActivity,
 } from "@/app/leads/activity-timeline";
 
-const createdAt = new Date("2026-07-24T21:33:00.000Z");
+const occurredAt = new Date("2026-07-24T21:33:00.000Z");
 const now = new Date("2026-07-24T21:39:00.000Z");
 
 function activity(overrides: Partial<TimelineActivity> = {}): TimelineActivity {
@@ -16,7 +17,7 @@ function activity(overrides: Partial<TimelineActivity> = {}): TimelineActivity {
     title: "Lead created",
     description: "Created manually",
     metadata: null,
-    createdAt,
+    occurredAt,
     ...overrides,
   };
 }
@@ -117,6 +118,121 @@ describe("activity timeline rendering", () => {
     expect(html).toContain('dateTime="2026-07-24T21:33:00.000Z"');
   });
 
+  it("uses occurred-at for display and groups events by activity date", () => {
+    const html = renderToStaticMarkup(
+      <ActivityTimeline
+        now={now}
+        activities={[
+          activity({
+            id: "today-new",
+            title: "Newest today",
+            occurredAt: new Date("2026-07-24T21:33:00.000Z"),
+            createdAt: new Date("2026-07-27T12:00:00.000Z"),
+          }),
+          activity({
+            id: "today-old",
+            title: "Older today",
+            occurredAt: new Date("2026-07-24T16:00:00.000Z"),
+          }),
+          activity({
+            id: "yesterday",
+            title: "Yesterday event",
+            occurredAt: new Date("2026-07-23T18:00:00.000Z"),
+          }),
+          activity({
+            id: "older",
+            title: "Older event",
+            occurredAt: new Date("2026-07-20T18:00:00.000Z"),
+          }),
+        ]}
+      />,
+    );
+
+    expect(html.match(/>Today</g)).toHaveLength(1);
+    expect(html.match(/>Yesterday</g)).toHaveLength(1);
+    expect(html).toContain("July 20, 2026");
+    expect(html).toContain('dateTime="2026-07-24T21:33:00.000Z"');
+    expect(html).not.toContain('dateTime="2026-07-27T12:00:00.000Z"');
+  });
+
+  it("uses the supplied time zone consistently for date grouping", () => {
+    const html = renderToStaticMarkup(
+      <ActivityTimeline
+        now="2026-07-25T00:30:00.000Z"
+        timeZone="America/Los_Angeles"
+        activities={[
+          activity({
+            occurredAt: new Date("2026-07-24T23:30:00.000Z"),
+          }),
+        ]}
+      />,
+    );
+
+    expect(html).toContain(">Today<");
+    expect(html).not.toContain(">Yesterday<");
+    expect(html).toContain("Jul 24, 2026");
+  });
+
+  it("renders source and actor context plus related entity links", () => {
+    const html = renderToStaticMarkup(
+      <ActivityTimeline
+        now={now}
+        activities={[
+          activity({
+            id: "message",
+            type: "MESSAGE_RECEIVED",
+            title: "New email received",
+            source: "GMAIL",
+            actorType: "CONTACT",
+            conversation: {
+              id: "conversation-a",
+              subject: "Pricing question",
+            },
+          }),
+          activity({
+            id: "task",
+            type: "TASK_COMPLETED",
+            title: "Task completed",
+            source: "TASK",
+            actorType: "USER",
+            task: { id: "task-a", title: "Send proposal" },
+          }),
+        ]}
+      />,
+    );
+
+    expect(html).toContain("Gmail");
+    expect(html).toContain("Contact");
+    expect(html).toContain('href="/inbox?conversation=conversation-a"');
+    expect(html).toContain("Open conversation");
+    expect(html).toContain('href="/tasks/task-a/edit"');
+    expect(html).toContain("Open task");
+  });
+
+  it("explains when a related entity is no longer available", () => {
+    const html = renderToStaticMarkup(
+      <ActivityTimeline
+        now={now}
+        activities={[
+          activity({
+            type: "TASK_DELETED",
+            title: "Task deleted",
+            task: null,
+          }),
+          activity({
+            id: "removed-conversation",
+            type: "CONVERSATION_UNLINKED",
+            title: "Conversation detached",
+            conversation: null,
+          }),
+        ]}
+      />,
+    );
+
+    expect(html).toContain("Related task is no longer available.");
+    expect(html).toContain("Related conversation is no longer available.");
+  });
+
   it("preserves supplied newest-first order", () => {
     const html = renderToStaticMarkup(
       <ActivityTimeline
@@ -148,11 +264,43 @@ describe("activity timeline rendering", () => {
     ).not.toThrow();
   });
 
-  it("renders the legacy empty state", () => {
+  it("renders the unified activity empty state", () => {
     const html = renderToStaticMarkup(
       <ActivityTimeline activities={[]} now={now} />,
     );
     expect(html).toContain("This lead has no recorded activity yet.");
-    expect(html).toContain("New changes will appear here.");
+    expect(html).toContain("New business events will appear here.");
+  });
+
+  it("server-renders the initial page and isolates only cursor pagination", () => {
+    const html = renderToStaticMarkup(
+      <ActivityTimeline
+        leadId="cm123456789012345678901234"
+        nextCursor="activity-next"
+        activities={[activity()]}
+        now={now}
+      />,
+    );
+
+    expect(html).toContain("Lead created");
+    expect(html).toContain("Load older activity");
+    expect(html).not.toContain("Loading activity history");
+
+    const serverSource = readFileSync(
+      new URL("./activity-timeline.tsx", import.meta.url),
+      "utf8",
+    );
+    const paginationSource = readFileSync(
+      new URL("./activity-timeline-pagination.tsx", import.meta.url),
+      "utf8",
+    );
+    expect(serverSource).not.toContain('"use client"');
+    expect(serverSource).not.toContain("next/dynamic");
+    expect(serverSource).not.toContain("lucide-react");
+    expect(serverSource).not.toContain("@/app/components");
+    expect(paginationSource).toContain('"use client"');
+    expect(paginationSource).not.toContain("next/dynamic");
+    expect(paginationSource).not.toContain("lucide-react");
+    expect(paginationSource).not.toContain("@/app/components");
   });
 });

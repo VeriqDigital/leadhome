@@ -13,6 +13,11 @@ const database = vi.hoisted(() => ({
       state.lead?.id === where.id && state.lead?.userId === where.userId
         ? { ...state.lead }
         : null),
+    findMany: vi.fn(async ({ where }: any) =>
+      state.lead?.userId === where.userId &&
+      where.id.in.includes(state.lead.id)
+        ? [{ id: state.lead.id }]
+        : []),
     updateMany: vi.fn(async ({ where, data }: any) => {
       if (
         state.forceZero ||
@@ -30,9 +35,9 @@ const database = vi.hoisted(() => ({
     }),
   },
   leadActivity: {
-    create: vi.fn(async ({ data }: any) => {
-      state.activities.push(data);
-      return { id: `activity-${state.activities.length}` };
+    createMany: vi.fn(async ({ data }: any) => {
+      state.activities.push(...data);
+      return { count: data.length };
     }),
   },
 }));
@@ -76,6 +81,8 @@ describe("pipeline status mutation", () => {
     expect(state.activities).toEqual([
       expect.objectContaining({
         type: "STATUS_CHANGED",
+        actorType: "USER",
+        source: "MANUAL",
         metadata: { from: "NEW", to: "CONTACTED" },
       }),
     ]);

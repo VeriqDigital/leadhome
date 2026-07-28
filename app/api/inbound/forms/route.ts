@@ -5,6 +5,7 @@ import { hashSecret, hashesMatch } from "@/lib/inbound-crypto";
 import { bearerToken, BodyTooLargeError, readLimitedJson, requestIp } from "@/lib/inbound-request";
 import { idempotencyKeySchema, inboundLeadSchema } from "@/lib/inbound-validation";
 import { reportOperationalError } from "@/lib/server-errors";
+import { recordActivity } from "@/lib/activity-service";
 
 export const runtime = "nodejs";
 
@@ -102,22 +103,25 @@ export async function POST(request: Request) {
         },
         select: { id: true },
       });
-      await tx.leadActivity.create({
-        data: {
-          leadId: created.id,
-          userId: source.userId,
-          type: "WEBSITE_SUBMISSION_RECEIVED",
-          title: "Website submission received",
-          description: `Received from ${source.name}`,
-          metadata: {
-            inboundSourceId: source.id,
-            inboundSourceName: source.name,
-            estimatedValue: payload.data.estimatedValue ?? null,
-            company: payload.data.company ?? null,
-            email: payload.data.email ?? null,
-            phone: payload.data.phone ?? null,
-          },
+      await recordActivity(tx, {
+        ownerId: source.userId,
+        leadId: created.id,
+        type: "WEBSITE_SUBMISSION_RECEIVED",
+        actorType: "CONTACT",
+        source: "WEBSITE",
+        title: "Website lead created",
+        description: `Submission received from ${source.name}`,
+        metadata: {
+          inboundSourceId: source.id,
+          inboundSourceName: source.name,
+          estimatedValue: payload.data.estimatedValue ?? null,
+          company: payload.data.company ?? null,
+          email: payload.data.email ?? null,
+          phone: payload.data.phone ?? null,
         },
+        idempotencyKey: idempotencyHash
+          ? `website:${source.id}:${idempotencyHash}`
+          : null,
       });
       return created;
     };

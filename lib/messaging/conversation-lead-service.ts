@@ -7,6 +7,7 @@ import { normalizeEmailAddresses } from "./matching-service";
 import {
   enqueueConversationAnalysisAfterLeadLink,
 } from "@/lib/ai/conversation-analysis/job-service";
+import { recordActivity } from "@/lib/activity-service";
 
 export type ConversationLeadPrefill = {
   name: string;
@@ -208,15 +209,15 @@ export async function createLeadFromConversation({
       data: { ...lead, userId: ownerId },
       select: { id: true },
     });
-    await tx.leadActivity.create({
-      data: {
-        leadId: created.id,
-        userId: ownerId,
-        type: "LEAD_CREATED",
-        title: "Lead created",
-        description: "Created from Inbox conversation",
-        conversationId,
-      },
+    await recordActivity(tx, {
+      ownerId,
+      leadId: created.id,
+      conversationId,
+      type: "LEAD_CREATED",
+      actorType: "USER",
+      source: "INBOX",
+      title: "Lead created",
+      description: "Created from Inbox conversation",
     });
     await attach(tx, ownerId, conversation, created.id);
     return { leadId: created.id, created: true };
@@ -244,16 +245,16 @@ async function attach(
     },
   });
   if (updated.count !== 1) throw new Error("Conversation was not attached.");
-  await tx.leadActivity.create({
-    data: {
-      leadId,
-      userId: ownerId,
-      conversationId: conversation.id,
-      type: "CONVERSATION_LINKED",
-      title: "Conversation attached",
-      description: conversation.subject ?? "No subject",
-      metadata: { automatic: false, source: "create-lead-from-conversation" },
-    },
+  await recordActivity(tx, {
+    ownerId,
+    leadId,
+    conversationId: conversation.id,
+    type: "CONVERSATION_LINKED",
+    actorType: "USER",
+    source: "INBOX",
+    title: "Conversation attached",
+    description: conversation.subject ?? "No subject",
+    metadata: { automatic: false, source: "create-lead-from-conversation" },
   });
   await tx.lead.update({
     where: { id: leadId },

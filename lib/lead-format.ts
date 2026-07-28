@@ -68,6 +68,15 @@ export function formatDate(value: Date | null | undefined) {
     : "No date";
 }
 
+export function formatDateInputValue(value: Date | null | undefined) {
+  if (!value || !Number.isFinite(value.getTime())) return null;
+  return [
+    value.getFullYear(),
+    String(value.getMonth() + 1).padStart(2, "0"),
+    String(value.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
 export function formatDateOnly(value: unknown) {
   if (!value) return "No date";
   const normalized =
@@ -88,16 +97,18 @@ export function formatDateOnly(value: unknown) {
   }).format(date);
 }
 
-export function formatDateTime(value: Date) {
+export function formatDateTime(value: Date, timeZone?: string) {
   if (!Number.isFinite(value.getTime())) return "Unknown time";
   const date = new Intl.DateTimeFormat("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
+    timeZone,
   }).format(value);
   const time = new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
     minute: "2-digit",
+    timeZone,
   }).format(value);
   return `${date} · ${time}`;
 }

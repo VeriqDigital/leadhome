@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
     updatedAt: Date;
   }>(),
   activities: 0,
+  activityRows: [] as Record<string, unknown>[],
 }));
 
 const analysis = vi.hoisted(() => ({
@@ -25,6 +26,15 @@ const database = vi.hoisted(() => ({
         lead: row.leadId ? { id: row.leadId, name: `Lead ${row.leadId}`, email: null } : null,
       };
     }),
+    findMany: vi.fn(async ({ where }: {
+      where: { id: { in: string[] }; ownerId: string };
+    }) =>
+      [...state.conversations.values()]
+        .filter(
+          (row) =>
+            row.ownerId === where.ownerId && where.id.in.includes(row.id),
+        )
+        .map((row) => ({ id: row.id, leadId: row.leadId }))),
     updateMany: vi.fn(async ({ where, data }: {
       where: { id: string; ownerId: string };
       data: Record<string, string>;
@@ -38,12 +48,30 @@ const database = vi.hoisted(() => ({
   lead: {
     findFirst: vi.fn(async ({ where }: { where: { id: string; userId: string } }) =>
       where.userId === "owner-a" ? { id: where.id } : null),
+    findMany: vi.fn(async ({ where }: {
+      where: { id: { in: string[] }; userId: string };
+    }) =>
+      where.userId === "owner-a"
+        ? where.id.in.map((id) => ({ id }))
+        : []),
     update: vi.fn(async ({ where }: { where: { id: string } }) => ({
       id: where.id,
     })),
   },
+  message: {
+    findMany: vi.fn(async () => []),
+  },
+  task: {
+    findMany: vi.fn(async () => []),
+  },
   leadActivity: {
-    create: vi.fn(async () => { state.activities++; }),
+    createMany: vi.fn(async ({ data }: {
+      data: Record<string, unknown>[];
+    }) => {
+      state.activityRows.push(...data);
+      state.activities += data.length;
+      return { count: data.length };
+    }),
   },
   $transaction: vi.fn(async (operation: (tx: unknown) => unknown) => operation(database)),
 }));
@@ -82,6 +110,7 @@ describe("canonical conversation control mutations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.activities = 0;
+    state.activityRows.length = 0;
     analysis.enqueue.mockResolvedValue(undefined);
     state.conversations.clear();
     for (const id of ["conversation-a", "conversation-b"]) {
@@ -108,6 +137,14 @@ describe("canonical conversation control mutations", () => {
     });
     expect(repeated.changed).toBe(false);
     expect(database.conversation.updateMany).toHaveBeenCalledTimes(1);
+    expect(state.activityRows).toEqual([
+      expect.objectContaining({
+        userId: "owner-a",
+        leadId: null,
+        conversationId: "conversation-b",
+        type: "CONVERSATION_STATUS_CHANGED",
+      }),
+    ]);
   });
 
   it("persists classification and review state independently", async () => {
@@ -120,6 +157,33 @@ describe("canonical conversation control mutations", () => {
     expect(state.conversations.get("conversation-b")).toEqual(expect.objectContaining({
       classification: "LEAD", reviewState: "MATCHED", status: "OPEN",
     }));
+  });
+
+  it("records an enriched activity for a linked conversation status change", async () => {
+    const current = state.conversations.get("conversation-b")!;
+    state.conversations.set("conversation-b", {
+      ...current,
+      leadId: "lead-b",
+    });
+
+    await updateConversationStatus({
+      ownerId: "owner-a",
+      conversationId: "conversation-b",
+      status: "CLOSED",
+    });
+
+    expect(state.activityRows).toEqual([
+      expect.objectContaining({
+        userId: "owner-a",
+        leadId: "lead-b",
+        conversationId: "conversation-b",
+        type: "CONVERSATION_STATUS_CHANGED",
+        actorType: "USER",
+        source: "INBOX",
+        title: "Conversation status changed",
+        metadata: { from: "OPEN", to: "CLOSED" },
+      }),
+    ]);
   });
 
   it("rejects a wrong-owner mutation instead of reporting success", async () => {
@@ -166,6 +230,27 @@ describe("canonical conversation control mutations", () => {
     });
   });
 
+  it("records a combined status change for an unattached conversation", async () => {
+    await updateConversationControls({
+      ownerId: "owner-a",
+      conversationId: "conversation-b",
+      leadId: null,
+      classification: "UNKNOWN",
+      reviewState: "NEEDS_REVIEW",
+      status: "CLOSED",
+    });
+
+    expect(state.activityRows).toEqual([
+      expect.objectContaining({
+        userId: "owner-a",
+        leadId: null,
+        conversationId: "conversation-b",
+        type: "CONVERSATION_STATUS_CHANGED",
+        metadata: { from: "OPEN", to: "CLOSED" },
+      }),
+    ]);
+  });
+
   it("advances the attached lead in a combined save", async () => {
     await updateConversationControls({
       ownerId: "owner-a",
@@ -180,6 +265,17 @@ describe("canonical conversation control mutations", () => {
       where: { id: "lead-b" },
       data: { updatedAt: expect.any(Date) },
     });
+    expect(state.activityRows).toEqual([
+      expect.objectContaining({
+        userId: "owner-a",
+        leadId: "lead-b",
+        conversationId: "conversation-b",
+        type: "CONVERSATION_LINKED",
+        actorType: "USER",
+        source: "INBOX",
+        title: "Conversation attached",
+      }),
+    ]);
     expect(analysis.enqueue).toHaveBeenCalledTimes(1);
     expect(analysis.enqueue).toHaveBeenCalledWith(
       "owner-a",

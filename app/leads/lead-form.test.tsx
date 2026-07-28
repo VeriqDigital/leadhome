@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   SaveResultMessage,
+  canonicalEditableFormValues,
   canonicalFormValues,
+  leadFormRenderValues,
 } from "@/app/leads/lead-form";
 
 describe("lead save result messaging", () => {
@@ -39,7 +41,37 @@ describe("lead form canonical state", () => {
     expect(fields.nextFollowUp).toBe("2026-08-12");
   });
 
-  it("uses unique fields and explicit guarded submission without form-action reset", () => {
+  it("takes a new persisted follow-up from props without replacing the editable draft", () => {
+    const original = {
+      name: "Jane",
+      company: "Acme",
+      email: "jane@example.com",
+      phone: "",
+      source: "MANUAL" as const,
+      status: "CONTACTED" as const,
+      estimatedValue: "",
+      nextFollowUp: "2026-08-12",
+      message: "",
+    };
+    const editableDraft = {
+      ...canonicalEditableFormValues(original),
+      name: "Unsaved name",
+    };
+
+    const firstRender = leadFormRenderValues(editableDraft, original);
+    const secondRender = leadFormRenderValues(editableDraft, {
+      ...original,
+      nextFollowUp: "2026-08-20",
+    });
+
+    expect(firstRender.nextFollowUp).toBe("2026-08-12");
+    expect(secondRender.nextFollowUp).toBe("2026-08-20");
+    expect(secondRender.name).toBe("Unsaved name");
+    expect(editableDraft.name).toBe("Unsaved name");
+    expect("nextFollowUp" in editableDraft).toBe(false);
+  });
+
+  it("uses unique fields and explicit guarded submission without render-time synchronization", () => {
     const source = readFileSync(
       new URL("./lead-form.tsx", import.meta.url),
       "utf8",
@@ -52,5 +84,12 @@ describe("lead form canonical state", () => {
     expect(source).toContain("if (pending) return");
     expect(source).toContain("startTransition(() => formAction(data))");
     expect(source).toContain('type="submit"');
+    expect(source).not.toMatch(/if\s*\([^)]*\)\s*\{\s*set[A-Z]/);
+    expect(source).not.toContain("synchronizedActionVersion");
+    expect(source).not.toContain("synchronizedFollowUp");
+    expect(source).not.toContain("router.refresh");
+    expect(source).toContain(
+      "const fields = leadFormRenderValues(editableFields, lead);",
+    );
   });
 });

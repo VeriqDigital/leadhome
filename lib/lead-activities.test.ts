@@ -117,7 +117,7 @@ describe("activity data access", () => {
 
     expect(mocks.findMany).toHaveBeenCalledWith({
       where: { leadId: "lead-a", userId: "user-a", lead: { userId: "user-a" } },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
       take: 50,
       select: {
         id: true,
@@ -125,7 +125,7 @@ describe("activity data access", () => {
         title: true,
         description: true,
         metadata: true,
-        createdAt: true,
+        occurredAt: true,
       },
     });
   });

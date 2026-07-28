@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { generateSourceToken, hashSecret } from "@/lib/inbound-crypto";
+import { recordActivity } from "@/lib/activity-service";
 
 export async function createInboundSource(userId: string, name: string) {
   const token = generateSourceToken();
@@ -50,18 +51,18 @@ export async function createInboundTestLead(userId: string, sourceId: string) {
       },
       select: { id: true },
     });
-    await tx.leadActivity.create({
-      data: {
-        leadId: lead.id,
-        userId,
-        type: "WEBSITE_SUBMISSION_RECEIVED",
-        title: "Website submission received",
-        description: `Received from ${source.name}`,
-        metadata: {
-          inboundSourceId: source.id,
-          inboundSourceName: source.name,
-          email: "test@leadhome.local",
-        },
+    await recordActivity(tx, {
+      ownerId: userId,
+      leadId: lead.id,
+      type: "WEBSITE_SUBMISSION_RECEIVED",
+      actorType: "CONTACT",
+      source: "WEBSITE",
+      title: "Website lead created",
+      description: `Submission received from ${source.name}`,
+      metadata: {
+        inboundSourceId: source.id,
+        inboundSourceName: source.name,
+        email: "test@leadhome.local",
       },
     });
     return lead;

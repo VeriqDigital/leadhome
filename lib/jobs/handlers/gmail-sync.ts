@@ -379,6 +379,7 @@ export async function runGmailSyncJob(
     });
     revalidatePath("/inbox");
     revalidatePath("/settings");
+    revalidatePath("/");
     return result;
   } catch (error) {
     if (

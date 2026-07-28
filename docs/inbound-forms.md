@@ -34,6 +34,14 @@ export async function POST(request: Request) {
 }
 ```
 
+Each newly created lead from a submission receives one
+`WEBSITE_SUBMISSION_RECEIVED` activity in the same transaction. The activity is
+owner-scoped, identifies the source as Website and actor as Contact, and does
+not copy the submitted message into its description. When an idempotency key
+is supplied, the activity uses a deterministic key derived from the owned
+website source and the hashed request key, so a retry cannot duplicate the
+event.
+
 ## curl
 
 ```bash

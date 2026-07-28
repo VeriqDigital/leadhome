@@ -7,7 +7,8 @@ const mocks = vi.hoisted(() => ({
   upsertRate: vi.fn(),
   deleteRates: vi.fn(),
   createLead: vi.fn(),
-  createActivity: vi.fn(),
+  findLeads: vi.fn(),
+  createActivities: vi.fn(),
   createSubmission: vi.fn(),
   findSubmission: vi.fn(),
   transaction: vi.fn(),
@@ -82,10 +83,12 @@ beforeEach(() => {
   mocks.upsertRate.mockResolvedValue({ count: 1 });
   mocks.deleteRates.mockResolvedValue({ count: 0 });
   mocks.createLead.mockImplementation(async () => {
-    const lead = { id: `lead-${++leadSequence}` };
-    committedLeadIds.push(lead.id);
-    return lead;
+    return { id: `lead-${++leadSequence}` };
   });
+  mocks.findLeads.mockResolvedValue([]);
+  mocks.createActivities.mockImplementation(async ({ data }) => ({
+    count: data.length,
+  }));
   mocks.findSubmission.mockImplementation(
     ({ where: { sourceId_idempotencyHash: key } }) => {
       const leadId = submissions.get(submissionKey(key.sourceId, key.idempotencyHash));
@@ -105,25 +108,41 @@ beforeEach(() => {
     return { id: `submission-${data.leadId}` };
   });
   mocks.transaction.mockImplementation(async (operation) => {
-    const pendingLeadIds: string[] = [];
+    const pendingLeads: { id: string; userId: string }[] = [];
     const pendingActivities: object[] = [];
     const result = await operation({
       lead: {
-        create: mocks.createLead.mockImplementationOnce(async () => {
-          const lead = { id: `lead-${++leadSequence}` };
-          pendingLeadIds.push(lead.id);
+        create: async (input: { data: { userId: string } }) => {
+          const lead = await mocks.createLead(input);
+          pendingLeads.push({ id: lead.id, userId: input.data.userId });
           return lead;
-        }),
+        },
+        findMany: async (input: {
+          where: { id: { in: string[] }; userId: string };
+        }) => {
+          mocks.findLeads(input);
+          return pendingLeads
+            .filter(
+              (lead) =>
+                lead.userId === input.where.userId &&
+                input.where.id.in.includes(lead.id),
+            )
+            .map(({ id }) => ({ id }));
+        },
       },
       leadActivity: {
-        create: mocks.createActivity.mockImplementationOnce(async ({ data }) => {
-          pendingActivities.push(data);
-          return { id: `activity-${data.leadId}` };
-        }),
+        createMany: async (input: {
+          data: object[];
+          skipDuplicates: boolean;
+        }) => {
+          const created = await mocks.createActivities(input);
+          pendingActivities.push(...input.data);
+          return created;
+        },
       },
       inboundSubmission: { create: mocks.createSubmission },
     });
-    committedLeadIds.push(...pendingLeadIds);
+    committedLeadIds.push(...pendingLeads.map(({ id }) => id));
     committedActivities.push(...pendingActivities);
     return result;
   });
@@ -146,10 +165,17 @@ describe("POST /api/inbound/forms", () => {
     expect(committedActivities).toEqual([
       expect.objectContaining({
         type: "WEBSITE_SUBMISSION_RECEIVED",
-        description: "Received from Veriq",
+        description: "Submission received from Veriq",
         userId: "owner-1",
+        actorType: "CONTACT",
+        source: "WEBSITE",
+        idempotencyKey: `website:source-1:${hashSecret("contact-12345")}`,
       }),
     ]);
+    expect(mocks.createActivities).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ leadId: "lead-1" })],
+      skipDuplicates: true,
+    });
   });
 
   it("deduplicates a repeated key from the same source", async () => {
@@ -235,7 +261,9 @@ describe("POST /api/inbound/forms", () => {
       expect.objectContaining({
         userId: "owner-1",
         type: "WEBSITE_SUBMISSION_RECEIVED",
-        title: "Website submission received",
+        actorType: "CONTACT",
+        source: "WEBSITE",
+        title: "Website lead created",
       }),
     ]);
   });

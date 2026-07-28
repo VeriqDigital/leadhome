@@ -23,6 +23,17 @@ const database = vi.hoisted(() => ({
       ) return null;
       return state.conversation;
     }),
+    findMany: vi.fn(async ({ where }: any) => {
+      if (
+        !state.conversation ||
+        state.conversation.ownerId !== where.ownerId ||
+        !where.id.in.includes(state.conversation.id)
+      ) return [];
+      return [{
+        id: state.conversation.id,
+        leadId: state.conversation.leadId,
+      }];
+    }),
     updateMany: vi.fn(async ({ where, data }: any) => {
       if (
         !state.conversation ||
@@ -41,6 +52,13 @@ const database = vi.hoisted(() => ({
           lead.userId === where.userId &&
           lead.email?.toLowerCase() === where.email?.equals?.toLowerCase(),
       ) ?? null),
+    findMany: vi.fn(async ({ where }: any) =>
+      state.leads
+        .filter(
+          (lead) =>
+            lead.userId === where.userId && where.id.in.includes(lead.id),
+        )
+        .map((lead) => ({ id: lead.id }))),
     create: vi.fn(async ({ data }: any) => {
       const lead = { id: `lead-${++state.sequence}`, ...data };
       state.leads.push(lead);
@@ -52,10 +70,16 @@ const database = vi.hoisted(() => ({
       return state.leads[index];
     }),
   },
+  message: {
+    findMany: vi.fn(async () => []),
+  },
+  task: {
+    findMany: vi.fn(async () => []),
+  },
   leadActivity: {
-    create: vi.fn(async ({ data }: any) => {
-      state.activities.push(data);
-      return { id: `activity-${state.activities.length}` };
+    createMany: vi.fn(async ({ data }: any) => {
+      state.activities.push(...data);
+      return { count: data.length };
     }),
   },
   inboundSubmission: {
@@ -166,6 +190,30 @@ describe("create lead from conversation", () => {
     expect(state.activities.map((item) => item.type)).toEqual([
       "LEAD_CREATED",
       "CONVERSATION_LINKED",
+    ]);
+    expect(state.activities).toEqual([
+      expect.objectContaining({
+        userId: "owner-a",
+        leadId: result.leadId,
+        conversationId: "conversation-a",
+        type: "LEAD_CREATED",
+        actorType: "USER",
+        source: "INBOX",
+        title: "Lead created",
+      }),
+      expect.objectContaining({
+        userId: "owner-a",
+        leadId: result.leadId,
+        conversationId: "conversation-a",
+        type: "CONVERSATION_LINKED",
+        actorType: "USER",
+        source: "INBOX",
+        title: "Conversation attached",
+        metadata: {
+          automatic: false,
+          source: "create-lead-from-conversation",
+        },
+      }),
     ]);
     expect(state.messagesUnchanged).toEqual(before);
     expect(analysis.enqueue).toHaveBeenCalledTimes(1);
