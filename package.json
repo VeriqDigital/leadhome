@@ -21,6 +21,7 @@
     "db:migrate:deploy": "prisma migrate deploy",
     "jobs:once": "node scripts/jobs-worker.mjs --once",
     "jobs:work": "node scripts/jobs-worker.mjs --poll",
+    "jobs:worker": "node scripts/jobs-worker.mjs --poll",
     "postinstall": "prisma generate"
   },
   "dependencies": {

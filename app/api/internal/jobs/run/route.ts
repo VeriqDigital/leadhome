@@ -1,4 +1,5 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { hasValidBearerSecret } from "@/lib/jobs/bearer-auth";
 import { getJobConfig } from "@/lib/jobs/config";
 import { runJobInvocation } from "@/lib/jobs/runner";
 import { reportOperationalError } from "@/lib/server-errors";
@@ -7,20 +8,11 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-function digest(value: string) {
-  return createHash("sha256").update(value, "utf8").digest();
-}
-
 export function hasValidWorkerSecret(
   request: Request,
   expectedSecret: string | null,
 ) {
-  if (!expectedSecret) return false;
-  const authorization = request.headers.get("authorization");
-  if (!authorization?.startsWith("Bearer ")) return false;
-  const providedSecret = authorization.slice("Bearer ".length);
-  if (!providedSecret) return false;
-  return timingSafeEqual(digest(providedSecret), digest(expectedSecret));
+  return hasValidBearerSecret(request, expectedSecret);
 }
 
 function json(body: object, status = 200) {
@@ -55,6 +47,7 @@ export async function POST(request: Request) {
       workerId: randomUUID(),
       maxJobs: config.jobsPerRun,
       timeBudgetMs: config.runTimeBudgetMs,
+      signal: request.signal,
     });
     return json({
       ok: true,
@@ -66,6 +59,7 @@ export async function POST(request: Request) {
       leaseLost: stats.leaseLost,
       staleRecovered: stats.staleRecovered,
       purged: stats.purged,
+      stoppedReason: stats.stoppedReason,
       stoppedForTimeBudget: stats.stoppedForTimeBudget,
       durationMs: stats.durationMs,
     });

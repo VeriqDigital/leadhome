@@ -138,6 +138,7 @@ describe("generic job invocation", () => {
       completed: 2,
       retried: 0,
       failed: 0,
+      stoppedReason: "max_jobs",
     }));
     expect(mocks.runGmail).toHaveBeenCalledTimes(2);
     expect(mocks.runGmail).toHaveBeenNthCalledWith(
@@ -215,6 +216,35 @@ describe("generic job invocation", () => {
       maxJobs: 3,
       timeBudgetMs: 45_000,
     })).resolves.toEqual(expect.objectContaining({ failed: 1 }));
+  });
+
+  it("continues to unrelated work after one job fails", async () => {
+    mocks.claim
+      .mockResolvedValueOnce(job("job-fail"))
+      .mockResolvedValueOnce(job("job-success"))
+      .mockResolvedValueOnce(null);
+    mocks.runGmail
+      .mockRejectedValueOnce(
+        new JobExecutionError("PERMANENT", "Permanent failure.", false),
+      )
+      .mockResolvedValueOnce(result);
+    mocks.retry.mockResolvedValueOnce({ kind: "failed" });
+
+    await expect(
+      runJobInvocation({
+        workerId: "worker-123",
+        maxJobs: 3,
+        timeBudgetMs: 45_000,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        claimed: 2,
+        completed: 1,
+        failed: 1,
+        stoppedReason: "queue_empty",
+      }),
+    );
+    expect(mocks.runGmail).toHaveBeenCalledTimes(2);
   });
 
   it("queues a successor after terminal analysis failure only when the handler reports newer content", async () => {
@@ -307,9 +337,31 @@ describe("generic job invocation", () => {
       now: clock,
     })).resolves.toEqual(expect.objectContaining({
       claimed: 0,
+      stoppedReason: "time_budget",
       stoppedForTimeBudget: true,
       durationMs: 1_000,
     }));
+    expect(mocks.claim).not.toHaveBeenCalled();
+  });
+
+  it("does not claim work after an invocation is aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      runJobInvocation({
+        workerId: "worker-123",
+        maxJobs: 10,
+        timeBudgetMs: 240_000,
+        signal: controller.signal,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        claimed: 0,
+        stoppedReason: "aborted",
+        stoppedForTimeBudget: false,
+      }),
+    );
     expect(mocks.claim).not.toHaveBeenCalled();
   });
 });

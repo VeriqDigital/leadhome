@@ -36,6 +36,31 @@ deterministic activity keys, so a retried job cannot duplicate those events.
 Progress phases, retries, no-op checks, and operational counters are not
 timeline activity.
 
+## Execution paths
+
+Both triggers reuse `runJobInvocation` in `lib/jobs/runner.ts`; claim,
+dispatch, retry, cancellation, completion, and cleanup logic is not duplicated.
+
+Local development follows:
+
+1. `scripts/jobs-worker.mjs` polls with one sequential HTTP request.
+2. `POST /api/internal/jobs/run` verifies `JOB_RUNNER_SECRET`.
+3. The shared runner recovers stale work and performs one bounded pass.
+4. `claimNextJob` atomically leases one eligible row.
+5. The typed handler runs and the service persists completion, retry, terminal
+   failure, cancellation, or lease loss.
+6. The local process waits before beginning another pass.
+
+Vercel production follows:
+
+1. Vercel Cron sends `GET /api/cron/jobs` on the configured schedule.
+2. The route verifies the exact `Bearer ${CRON_SECRET}` header.
+3. The same shared runner performs one bounded pass and returns immediately
+   when the queue is empty.
+
+Neither route accepts a job payload or runs durable work inline in the browser
+request that enqueued it.
+
 ## Job data and statuses
 
 `Job` records carry their type and lifecycle state, a typed JSON payload,
@@ -181,7 +206,7 @@ idempotency key is released, and the current handler acknowledges cancellation
 between major phases. An already-running external request cannot be interrupted
 instantly.
 
-## Worker endpoint security and limits
+## Job-trigger security and limits
 
 `POST /api/internal/jobs/run` is excluded from browser-session Proxy handling
 because it has a separate machine credential. It requires:
@@ -201,6 +226,25 @@ Every invocation gets a new worker UUID. `JOBS_PER_RUN` and
 only safe operational counts and duration; it never contains payloads,
 credentials, messages, or stack traces.
 
+`GET /api/cron/jobs` is also excluded from browser-session Proxy handling, but
+uses a separate production-only machine credential:
+
+```http
+Authorization: Bearer <CRON_SECRET>
+```
+
+Missing, weak, whitespace-padded, or incorrect configuration fails closed with
+`401`. A browser session alone is never sufficient. The comparison is
+timing-safe, the response is `no-store`, and the secret is not accepted in the
+URL or body.
+
+The cron route runs at most 10 jobs sequentially, gives the runner a
+240-second internal budget, and declares a 300-second Vercel Function maximum.
+The 60-second platform cushion lets deadline-aware handlers persist a retry
+instead of being killed at the route limit. The runner does not sleep or wait
+for future work in a Vercel invocation. It stops for an empty queue, the job
+limit, the time budget, or an aborted request.
+
 `GET /api/jobs/status` remains behind browser authentication. It requires a
 valid communication-account ID and performs a second owner-scoped query before
 returning the latest public Gmail job view. Responses from both routes use
@@ -217,16 +261,45 @@ npm run jobs:once
 For modest local polling:
 
 ```powershell
-npm run jobs:work
+npm run jobs:worker
 ```
+
+`npm run jobs:work` remains an equivalent compatibility alias.
 
 The polling process runs requests sequentially, waits
 `JOB_WORKER_POLL_INTERVAL_MS` between calls, and stops cleanly on `SIGINT` or
-`SIGTERM`. It invokes the same protected HTTP endpoint as production rather
-than bypassing claim or dispatch logic. The script loads the normal Next.js
-environment files and never prints the runner secret.
+`SIGTERM`. It invokes the protected internal route, which calls the same shared
+runner used by the Vercel route, rather than bypassing claim or dispatch logic.
+The script loads the normal Next.js environment files and never prints the
+runner secret. Each completed or aborted delay removes its abort listener.
 
-## Production invocation
+## Production Vercel Cron
+
+The repository-root `vercel.json` registers:
+
+```json
+{
+  "path": "/api/cron/jobs",
+  "schedule": "* * * * *"
+}
+```
+
+This means once per minute, and Vercel cron expressions always use UTC.
+Vercel's [current Cron usage limits](https://vercel.com/docs/cron-jobs/usage-and-pricing)
+allow a one-minute minimum on Pro and Enterprise. Hobby is limited to once per
+day and will reject this deployment, so LeadHome's intended production cadence
+requires Vercel Pro before deployment. Cron invokes the production deployment.
+Do not configure `CRON_SECRET` for Preview unless a deliberately isolated
+preview database should process preview jobs; leaving it absent makes preview
+HTTP calls fail closed.
+
+Expected queue start latency is up to roughly one minute, plus Vercel
+scheduling and function startup variability. Vercel does not retry a failed
+cron HTTP invocation. Durable pending/retry rows remain available to the next
+invocation; an interrupted running lease becomes recoverable after
+`JOB_STALE_AFTER_SECONDS`.
+
+### Deployment checklist
 
 Deploy migrations before allowing jobs to be queued:
 
@@ -235,23 +308,56 @@ npx prisma migrate deploy
 npx prisma migrate status
 ```
 
-An operator or external trigger can drain work with:
+Then:
+
+1. Confirm the Vercel project is on Pro or Enterprise and Node.js is `24.x`.
+2. In **Project → Settings → Environment Variables**, create `CRON_SECRET` for
+   **Production** only. Generate at least 32 random bytes outside the
+   repository; a 43-character base64url value is one suitable representation.
+3. Keep `DATABASE_URL`, provider credentials, and the other existing server
+   variables configured for Production.
+4. Deploy the commit. Do not manually create a second dashboard schedule;
+   `vercel.json` is the source of truth.
+5. Open **Project → Settings → Cron Jobs** and verify `/api/cron/jobs` has the
+   `* * * * *` schedule.
+6. Use **View Logs** for that cron entry and verify structured start/finish
+   records contain only counts, stop reason, and duration.
+
+Changing the schedule requires a configuration change and production
+deployment. The dashboard can disable it. Vercel Instant Rollback does not
+automatically restore the prior cron definition, so verify the Cron Jobs page
+after a rollback.
+
+### Manual testing
+
+With the Next.js server running and `CRON_SECRET` set only in the shell or
+local environment file, an authorized PowerShell request is:
 
 ```powershell
-curl.exe -X POST `
-  -H "Authorization: Bearer $env:JOB_RUNNER_SECRET" `
-  -H "Accept: application/json" `
-  "https://your-leadhome.example/api/internal/jobs/run"
+$headers = @{
+  Authorization = "Bearer $env:CRON_SECRET"
+}
+
+Invoke-RestMethod `
+  -Method GET `
+  -Uri "http://localhost:3000/api/cron/jobs" `
+  -Headers $headers
 ```
 
-No automatic schedule is installed in this phase. A future platform cron may
-invoke only this endpoint; it must not create arbitrary jobs or expose its
-secret to browser JavaScript.
+An unauthorized check is:
 
-Configuring an external trigger or continuously running `jobs:work` process is
-a production deployment prerequisite. Without a drainer, manual sync requests
-will correctly remain queued; the browser request itself never executes Gmail
-work.
+```powershell
+Invoke-WebRequest `
+  -Method GET `
+  -Uri "http://localhost:3000/api/cron/jobs" `
+  -SkipHttpErrorCheck
+```
+
+For a production smoke test, use the same authorized request against the
+production HTTPS URL, inspect the returned counts, enqueue one synthetic test
+job through the normal application flow, invoke again, and confirm a repeated
+invocation does not duplicate its business result. Never put the real secret
+in source control, a committed fixture, or a URL.
 
 ## Environment variables
 
@@ -260,6 +366,7 @@ All settings are server-only and must never use a `NEXT_PUBLIC_` prefix.
 | Variable | Purpose |
 | --- | --- |
 | `JOB_RUNNER_SECRET` | High-entropy worker bearer secret; at least 40 characters with no surrounding whitespace |
+| `CRON_SECRET` | Production Vercel Cron bearer secret; at least 32 random bytes (43+ base64url characters), never `NEXT_PUBLIC_`; Preview is disabled by default by leaving it unset |
 | `JOB_MAX_ATTEMPTS` | Bounded default attempt count |
 | `JOB_STALE_AFTER_SECONDS` | Age at which an uncompleted lease is recoverable |
 | `JOBS_PER_RUN` | Maximum jobs claimed by one HTTP invocation |
@@ -274,8 +381,10 @@ All settings are server-only and must never use a `NEXT_PUBLIC_` prefix.
 | `AI_ANALYSIS_VERSION` | Content/prompt version included in idempotent analysis hashing |
 | `RUN_OPENAI_SMOKE_TEST` | Explicit opt-in for a synthetic live-provider smoke test; normal tests never call OpenAI |
 
-Rotate `JOB_RUNNER_SECRET` through the deployment secret store. A rotation may
-briefly require updating external triggers and workers at the same time.
+Rotate both bearer secrets through the deployment secret store.
+`JOB_RUNNER_SECRET` rotation may briefly require updating local/external
+workers at the same time. Vercel automatically sends the configured
+`CRON_SECRET` as the cron request's Bearer header.
 
 ## Retention and observability
 
@@ -295,6 +404,13 @@ and stale recovery. They include job/type identifiers, attempt, duration, and
 bounded counts. They omit OAuth data, message content, provider payloads, and
 stack traces that could contain customer information.
 
+Each cron invocation adds a structured start record and a finish record with
+claimed, completed, failed, retried, cancelled, lease-lost, stale-recovered,
+purged, stop-reason, and duration fields. A route-level failure logs only its
+event and duration. Cron responses and invocation logs never include complete
+payloads, email bodies, prompts, OAuth/access tokens, personal data, arbitrary
+error text, or stack traces.
+
 Conversation-analysis Jobs retain only bounded operational result metadata.
 Canonical `ConversationAnalysis` records retain the model, input/output/total
 token counts, duration, content hash, and truncation state. Pricing is not
@@ -310,3 +426,14 @@ The job system does not implement automatic scheduled Gmail sync, email
 sending, Gmail modification, WebSockets, Kafka, microservices,
 user-configurable workflows, a visual automation builder, autonomous actions,
 teams, or billing.
+
+Vercel Cron is a queue drainer, not a replacement for the durable queue. The
+system remains at-least-once: an invocation can perform an external effect and
+end before committing completion. Handlers must remain idempotent, claims must
+continue using database leases, and no in-memory process lock may be used.
+Overlapping or duplicate cron delivery is safe because `FOR UPDATE SKIP
+LOCKED` lets only one invocation lease a row. If a function ends while work is
+leased, heartbeats stop; stale recovery later schedules another attempt or
+marks an exhausted job failed. There is not yet an alert for a stalled queue,
+and a single job that cannot finish inside its deadline must retry or be split
+into smaller durable work.

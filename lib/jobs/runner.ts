@@ -34,6 +34,7 @@ export type JobInvocationStats = {
   leaseLost: number;
   staleRecovered: number;
   purged: number;
+  stoppedReason: "queue_empty" | "max_jobs" | "time_budget" | "aborted";
   stoppedForTimeBudget: boolean;
   durationMs: number;
 };
@@ -121,16 +122,18 @@ export async function runJobInvocation({
   workerId,
   maxJobs,
   timeBudgetMs,
+  signal,
   now = () => Date.now(),
 }: {
   workerId: string;
   maxJobs: number;
   timeBudgetMs: number;
+  signal?: AbortSignal;
   now?: () => number;
 }): Promise<JobInvocationStats> {
   const started = now();
   const boundedJobs = Math.max(1, Math.min(Math.floor(maxJobs), 25));
-  const boundedBudget = Math.max(1_000, Math.min(timeBudgetMs, 55_000));
+  const boundedBudget = Math.max(1_000, Math.min(timeBudgetMs, 240_000));
   const deadlineAt = started + boundedBudget;
   const reserveMs = Math.min(5_000, Math.floor(boundedBudget * 0.2));
   const stale = await recoverStaleJobs();
@@ -144,17 +147,26 @@ export async function runJobInvocation({
     leaseLost: 0,
     staleRecovered: stale.recovered,
     purged: purged.deleted,
+    stoppedReason: "queue_empty",
     stoppedForTimeBudget: false,
     durationMs: 0,
   };
 
   while (stats.claimed < boundedJobs) {
+    if (signal?.aborted) {
+      stats.stoppedReason = "aborted";
+      break;
+    }
     if (now() - started >= boundedBudget - reserveMs) {
+      stats.stoppedReason = "time_budget";
       stats.stoppedForTimeBudget = true;
       break;
     }
     const job = await claimNextJob(workerId);
-    if (!job) break;
+    if (!job) {
+      stats.stoppedReason = "queue_empty";
+      break;
+    }
     stats.claimed++;
     const outcome = await executeClaimedJob(job, workerId, deadlineAt);
     switch (outcome) {
@@ -174,6 +186,12 @@ export async function runJobInvocation({
         stats.leaseLost++;
         break;
     }
+  }
+  if (
+    stats.claimed >= boundedJobs &&
+    stats.stoppedReason === "queue_empty"
+  ) {
+    stats.stoppedReason = "max_jobs";
   }
   stats.durationMs = Math.max(0, now() - started);
   return stats;

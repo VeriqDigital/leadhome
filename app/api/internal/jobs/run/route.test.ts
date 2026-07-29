@@ -44,6 +44,7 @@ beforeEach(() => {
     leaseLost: 0,
     staleRecovered: 0,
     purged: 0,
+    stoppedReason: "queue_empty",
     stoppedForTimeBudget: false,
     durationMs: 10,
   });
@@ -89,6 +90,7 @@ describe("POST /api/internal/jobs/run", () => {
       ),
       maxJobs: 2,
       timeBudgetMs: 12000,
+      signal: expect.any(AbortSignal),
     });
     await expect(response.json()).resolves.toEqual({
       ok: true,
@@ -100,6 +102,7 @@ describe("POST /api/internal/jobs/run", () => {
       leaseLost: 0,
       staleRecovered: 0,
       purged: 0,
+      stoppedReason: "queue_empty",
       stoppedForTimeBudget: false,
       durationMs: 10,
     });
@@ -126,6 +129,7 @@ describe("POST /api/internal/jobs/run", () => {
       expect.objectContaining({
         maxJobs: 3,
         timeBudgetMs: 45000,
+        signal: expect.any(AbortSignal),
       }),
     );
   });

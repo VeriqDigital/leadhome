@@ -192,9 +192,11 @@ full lifecycle.
 
 Server actions enqueue typed jobs and reuse an existing active job through
 owner/type/idempotency uniqueness. Browser requests do not perform Gmail or
-OpenAI work. A worker calls `POST /api/internal/jobs/run`; the runner recovers
-stale work, atomically claims eligible rows with `FOR UPDATE SKIP LOCKED`,
-assigns a unique lease owner, and dispatches by `JobType`.
+OpenAI work. The local polling worker calls `POST /api/internal/jobs/run`;
+Vercel Cron calls `GET /api/cron/jobs` once per minute in production. Both
+machine-authenticated routes invoke `lib/jobs/runner.ts`, which recovers stale
+work, atomically claims eligible rows with `FOR UPDATE SKIP LOCKED`, assigns a
+unique lease owner, and dispatches by `JobType`.
 
 The runner and handlers provide:
 
@@ -209,12 +211,15 @@ The runner and handlers provide:
 - Safe, bounded errors and results that exclude credentials and message
   bodies.
 - Retention cleanup for terminal jobs while active jobs are preserved.
+- Explicit stop reasons for queue empty, maximum jobs, time budget, or abort.
 
 Gmail jobs call the existing provider adapter and provider-agnostic importer.
 Conversation-analysis jobs prepare bounded content, invoke the configured
 OpenAI provider, validate structured output, and lease-fence canonical
-analysis persistence. There is no in-repository production cron or scheduler;
-queued jobs remain queued until the protected endpoint is invoked.
+analysis persistence. `vercel.json` installs the production queue drainer at
+`* * * * *` UTC. It runs sequentially with a 10-job maximum, a 240-second
+internal budget, and a 300-second Node.js Function limit. Vercel Pro is
+required because Hobby supports only daily cron execution.
 
 The local polling worker removes each delay's shutdown-signal abort listener
 whether the timer completes normally or the process is stopping. This prevents
@@ -382,6 +387,8 @@ Important route handlers are:
   authorization and credential persistence.
 - `POST /api/inbound/forms`: server-to-server website lead ingestion.
 - `POST /api/internal/jobs/run`: machine-authenticated bounded worker runner.
+- `GET /api/cron/jobs`: `CRON_SECRET`-authenticated production Vercel Cron
+  trigger for the same bounded runner.
 - `GET /api/jobs/status`: owner-scoped Gmail job polling.
 - `GET /api/jobs/conversation-analysis/status`: owner-scoped AI job polling.
 - `GET /api/leads/[id]/activities`: authenticated, owner-scoped cursor pages
@@ -471,7 +478,7 @@ Verified protections include:
   cancellation, stale recovery, execution budgets, and safe error storage.
 - Polling-delay shutdown listeners are removed after both normal timers and
   aborts, preventing a long-running local worker from accumulating listeners.
-- A separate timing-safe, high-entropy worker secret.
+- Separate timing-safe, high-entropy local-worker and production-cron secrets.
 - Strict AI input/output bounds, provider-response non-retention, prompt
   injection defenses, evidence validation, and explicit confirmation before
   CRM mutations.
@@ -480,8 +487,9 @@ Known weaknesses include the lack of multi-factor authentication, password
 reset, roles/teams, comprehensive audit administration, and browser end-to-end
 security tests. Expired/consumed `OAuthState` rows have no documented cleanup
 service. Public Gmail use still depends on completing Google's consent and
-scope-verification requirements. The repository cannot guarantee background
-progress unless production operations invoke the worker endpoint.
+scope-verification requirements. Production job progress depends on an active
+Vercel Pro cron, a valid Production `CRON_SECRET`, healthy database/provider
+connections, and operator monitoring.
 
 ## Existing Tests and Verification
 
@@ -538,13 +546,13 @@ follow-up prop flow passed the focused Firefox and Chrome scenario. Node
 and matches Vercel's configured 24.x runtime. The worker regression also
 verified zero retained abort listeners after each of 12 polling delays.
 
-Final milestone verification passed: Prisma format, schema validation, and
-client generation; deployment of
+Current verification passes under Node 24.18.0: Prisma format, schema
+validation, and client generation; deployment of
 `20260727230000_unified_activity_timeline` and
 `20260727231500_correct_unified_activity_provenance`; migration status with all
-17 migrations applied; 110 focused activity regression tests; 355 full-suite
-tests with one opt-in OpenAI smoke test skipped; TypeScript; ESLint; and the
-Next.js production build.
+17 migrations applied; 50 focused job/cron regressions; 384 full-suite tests
+with one opt-in OpenAI smoke test skipped; TypeScript; ESLint; and the Next.js
+production build, including dynamic `/api/cron/jobs` output.
 
 ## Known Limitations and Technical Debt
 
@@ -553,8 +561,8 @@ Next.js production build.
   invented history.
 - The dashboard activity list is recency-based with a static meaningful-type
   allowlist, not a configurable priority or attention model.
-- There is no automatic scheduled Gmail sync; production requires an external
-  worker trigger.
+- There is no automatic periodic Gmail enqueue. Vercel Cron drains durable
+  jobs already created by user/application activity once per minute.
 - Gmail is read-only. Email sending, drafts, attachments/proposals analysis,
   Outlook, social messaging, SMS, and WhatsApp are not implemented.
 - Smart matching is deliberately limited to durable submission identifiers
@@ -583,8 +591,9 @@ Inbox and pipeline, transactional task/follow-up behavior, a generic
 recoverable job system, conservative AI analysis, unified activity history,
 and substantial automated regression coverage.
 
-Public or paid readiness is blocked by production worker operations, Google
-public-app review, broader end-to-end and real-database testing,
+Public or paid readiness is blocked by verifying production worker operations
+and alerting, Google public-app review, broader end-to-end and real-database
+testing,
 account-recovery/security features, and operational monitoring. The product
 also lacks team administration, billing, and the notification/attention
 workflows expected for broader self-service use.
@@ -641,8 +650,8 @@ workflows expected for broader self-service use.
 
 - When should the single-user owner model become a workspace/team model, and
   how should activity actors represent multiple human users?
-- What production scheduler or worker topology will continuously drain jobs,
-  and what monitoring/alerting will detect a stalled queue?
+- What monitoring/alerting should detect a stalled Vercel Cron or growing
+  durable queue?
 - Should users receive a stored timezone so due dates, activity date groups,
   and dashboard day boundaries are consistent across server and browser?
 - Should Recent Activity remain chronological, or should a separate

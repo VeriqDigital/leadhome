@@ -13,6 +13,10 @@ reload fallback, split the timeline into server-rendered content plus a small
 pagination island, aligned the runtime with Vercel, and retained the worker
 listener cleanup.
 
+Production job draining was subsequently configured as infrastructure for the
+existing queue, not as a new product milestone. Vercel Cron now invokes the
+same bounded runner used by the local worker.
+
 ## Milestone Status
 
 Complete
@@ -93,6 +97,14 @@ database reports all 17 repository migrations applied.
   linked Vercel project's `24.x` runtime. Node 24.18 includes the upstream
   TransformStream cancellation-race fix; Node 26.5 remains a verified
   comparison runtime rather than the deployment requirement.
+- Added a production-only, timing-safe `GET /api/cron/jobs` trigger and a
+  once-per-minute UTC `vercel.json` schedule. The route reuses the existing
+  database-leased runner with a 10-job limit, sequential execution,
+  240-second budget, and 300-second Node.js Function cap.
+- Preserved `npm run jobs:worker` for continuous local polling (with
+  `jobs:work` retained as an alias) and the separately protected internal
+  route. Both HTTP routes share claim, dispatch, retry, cancellation,
+  progress, cleanup, and idempotency logic.
 
 ## Database Changes
 
@@ -173,6 +185,11 @@ operational data, not business activity.
 - `.node-version` — exact local Node 24.18.0 runtime pin.
 - `scripts/lead-detail-browser.mjs` — focused Firefox and Chrome lead-detail
   acceptance coverage.
+- `app/api/cron/jobs/route.ts` and focused tests — secured Vercel Cron
+  trigger, safe summaries/logging, and production configuration assertions.
+- `lib/jobs/bearer-auth.ts` — timing-safe exact Bearer comparison shared by
+  both machine-authenticated job routes.
+- `vercel.json` — production once-per-minute queue-drain schedule.
 - `prisma/migrations/20260727230000_unified_activity_timeline/migration.sql` —
   additive schema extension and compatibility backfill.
 - `prisma/migrations/20260727231500_correct_unified_activity_provenance/migration.sql`
@@ -208,6 +225,10 @@ operational data, not business activity.
   Vercel.
 - `scripts/jobs-worker.mjs` and its tests — remove each polling delay's abort
   listener when the timer settles or shutdown occurs.
+- `lib/jobs/runner.ts`, the internal job route, `proxy.ts`, `package.json`, and
+  `.env.example` — 240-second-capable bounded passes, abort-aware stop
+  behavior, cron Proxy exclusion, the local command alias, and the documented
+  production secret.
 - `lib/messaging/import-service.ts`, conversation mutation services, and their
   tests — imported conversation, message, link, unlink, and status events.
 - `app/api/inbound/forms/route.ts`, `lib/inbound-sources.ts`, and tests —
@@ -257,6 +278,15 @@ operational data, not business activity.
   and Vercel-aligned runtime.
 - Worker listener regression — 12 consecutive polling delays each returned
   the shutdown signal's abort-listener count to zero.
+- Production-job infrastructure focus — cron authorization, safe empty/error
+  summaries, runner batch/time/abort stops, overlapping claim safety,
+  idempotency foundations, local polling, and the exact Vercel schedule are
+  covered without provider calls.
+- Node 24.18 production-infrastructure verification — 7 focused files and 50
+  tests passed; the full suite passed 384 tests in 71 files with the one
+  opt-in live OpenAI smoke test skipped; TypeScript, ESLint, Prisma format,
+  validate, generate, migration status, and the Next.js production build all
+  passed. The build emits `/api/cron/jobs` as a dynamic route.
 - `git diff --check` — Passed with no whitespace errors.
 
 ## Known Limitations
@@ -281,6 +311,11 @@ operational data, not business activity.
 - Next.js's optional React debug channel remains disabled in development until
   its cache-restore fallback can distinguish Firefox's zero-transfer
   navigation entry without forcing a document reload.
+- The once-per-minute Vercel schedule requires Pro or Enterprise; Hobby's
+  once-daily minimum cannot provide acceptable LeadHome queue latency.
+- Cron delivery and function execution are at-least-once. The database lease,
+  stale recovery, and handler idempotency remain mandatory, and production
+  queue-stall alerting is not yet implemented.
 
 ## Decisions for Future Milestones
 
