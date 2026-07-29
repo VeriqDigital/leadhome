@@ -1,18 +1,57 @@
 import "server-only";
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 const TTL_MS = 10 * 60 * 1000;
+export const OAUTH_INITIATION_DUPLICATE_WINDOW_MS = 15_000;
 const hash = (value: string) =>
   createHmac("sha256", process.env.AUTH_SECRET ?? "").update(value).digest("hex");
 
-export async function createOAuthState(userId: string, purpose = "gmail-connect") {
-  const value = randomBytes(32).toString("base64url");
-  await prisma.oAuthState.create({
-    data: { tokenHash: hash(value), userId, purpose, expiresAt: new Date(Date.now() + TTL_MS) },
+export async function beginOAuthState(
+  userId: string,
+  purpose = "gmail-connect",
+  now = new Date(),
+): Promise<
+  | { kind: "accepted"; state: string }
+  | { kind: "duplicate" }
+> {
+  return prisma.$transaction(async (tx) => {
+    const mutexKey = `oauth-initiation:${userId}:${purpose}`;
+    await tx.$executeRaw(Prisma.sql`
+      SELECT pg_advisory_xact_lock(
+        hashtextextended(${mutexKey}, 0::bigint)
+      )
+    `);
+
+    const duplicate = await tx.oAuthState.findFirst({
+      where: {
+        userId,
+        purpose,
+        usedAt: null,
+        expiresAt: { gt: now },
+        createdAt: {
+          gte: new Date(
+            now.getTime() - OAUTH_INITIATION_DUPLICATE_WINDOW_MS,
+          ),
+        },
+      },
+      select: { id: true },
+    });
+    if (duplicate) return { kind: "duplicate" };
+
+    const state = randomBytes(32).toString("base64url");
+    await tx.oAuthState.create({
+      data: {
+        tokenHash: hash(state),
+        userId,
+        purpose,
+        expiresAt: new Date(now.getTime() + TTL_MS),
+      },
+    });
+    return { kind: "accepted", state };
   });
-  return value;
 }
 
 export async function consumeOAuthState(value: string, userId: string, purpose = "gmail-connect") {

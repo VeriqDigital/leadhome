@@ -1,8 +1,8 @@
 "use client";
 
 import { useActionState, useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { GmailConnectButton } from "@/app/gmail-connect-button";
 import {
   syncGmailAction,
   type GmailSyncActionState,
@@ -198,15 +198,15 @@ export function GmailSyncForm({
 
   return <div className={variant === "inbox" ? "text-right" : ""}>
     {presentation.reconnectRequired
-      ? <Link
-          href="/api/gmail/connect?reconnect=1"
+      ? <GmailConnectButton
+          reconnect
           className={`${variant === "inbox"
             ? "rounded-xl border border-amber-300 px-4 py-2.5 text-amber-800 dark:text-amber-300"
             : "rounded-lg border border-amber-300 px-3 py-2 text-amber-800 dark:text-amber-300"
           } inline-flex text-sm font-semibold`}
         >
           Reconnect Gmail
-        </Link>
+        </GmailConnectButton>
       : <form action={formAction}>
           <input type="hidden" name="accountId" value={accountId}/>
           <button

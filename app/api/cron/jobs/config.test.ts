@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("Vercel jobs cron configuration", () => {
-  it("schedules the production route once per minute", () => {
+  it("schedules the production route at the committed daily cadence", () => {
     const config = JSON.parse(
       readFileSync("vercel.json", "utf8"),
     ) as {
@@ -13,7 +13,7 @@ describe("Vercel jobs cron configuration", () => {
     expect(config.$schema).toBe("https://openapi.vercel.sh/vercel.json");
     expect(config.crons).toContainEqual({
       path: "/api/cron/jobs",
-      schedule: "* * * * *",
+      schedule: "0 10 * * *",
     });
   });
 

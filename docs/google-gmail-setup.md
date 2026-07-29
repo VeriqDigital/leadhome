@@ -29,6 +29,18 @@ not request modify, compose, send, drafts, or full-mailbox access.
    `TOKEN_ENCRYPTION_KEY` in each environment. Never expose these with a
    `NEXT_PUBLIC_` prefix.
 
+`GOOGLE_GMAIL_REDIRECT_URI` must end in the dedicated
+`/api/gmail/callback` route. It must never point to
+`/api/auth/callback/google`: that route belongs to Auth.js Google sign-in and
+expects Auth.js's own PKCE verifier cookie. Gmail mailbox authorization uses
+its separate, state-validated callback and token store.
+
+Connect and reconnect controls deliberately use a full browser navigation
+rather than a Next.js `Link`. This prevents production Link prefetch from
+starting OAuth during rendering. The control and the server route both reject
+rapid duplicate initiation; safe logs record only the event, request
+host/path, and accepted/duplicate booleans.
+
 Google may omit a refresh token on repeat authorization. LeadHome preserves an
 existing encrypted refresh token. Use **Reconnect**, which requests consent
 again, when no token was granted or Google revoked access.
