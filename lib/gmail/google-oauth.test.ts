@@ -42,4 +42,21 @@ describe("Google OAuth flow separation", () => {
     expect(authSource).not.toMatch(/checks\s*:/);
     expect(authSource).not.toMatch(/pkce\s*:\s*false/i);
   });
+
+  it("leaves Account Security Google Link and Unlink on Auth.js", () => {
+    const settingsSource = readFileSync("app/settings/page.tsx", "utf8");
+    const actionsSource = readFileSync("app/actions/auth-actions.ts", "utf8");
+
+    expect(settingsSource).toContain(
+      "action={hasGoogle ? unlinkGoogleAction : linkGoogleAction}",
+    );
+    expect(settingsSource).toContain('"Unlink Google"');
+    expect(settingsSource).toContain('"Link Google sign-in"');
+    expect(actionsSource).toMatch(
+      /export async function linkGoogleAction\(\)[\s\S]*?signIn\("google"/,
+    );
+    expect(actionsSource).toMatch(
+      /export async function unlinkGoogleAction\(\)[\s\S]*?prisma\.account\.deleteMany/,
+    );
+  });
 });

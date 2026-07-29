@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { GmailSyncJobView } from "@/lib/jobs/types";
 import { GmailSyncForm } from "@/app/inbox/gmail-sync-form";
-import { GmailConnectButton } from "@/app/gmail-connect-button";
+import { GmailConnectLink } from "@/app/gmail-connect-link";
 import { DisconnectGmailForm } from "./disconnect-gmail-form";
 
 type GmailAccount = {
@@ -14,7 +14,7 @@ export function GmailIntegrations({ accounts }: { accounts: GmailAccount[] }) {
   return <section>
     <h3 className="text-base font-semibold">Integrations</h3>
     <p className="mt-1 text-sm text-[#687080]">Connect one Gmail mailbox independently from your LeadHome sign-in.</p>
-    {!accounts.length && <GmailConnectButton className="mt-4 inline-flex rounded-xl bg-[#17181c] px-4 py-2.5 text-sm font-semibold text-white">Connect Gmail</GmailConnectButton>}
+    {!accounts.length && <GmailConnectLink className="mt-4 inline-flex rounded-xl bg-[#17181c] px-4 py-2.5 text-sm font-semibold text-white">Connect Gmail</GmailConnectLink>}
     <div className="mt-4 space-y-3">{accounts.map((account) => (
       <article key={account.id} className="rounded-xl border border-black/10 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -32,7 +32,7 @@ export function GmailIntegrations({ accounts }: { accounts: GmailAccount[] }) {
               fallbackError={account.lastSyncError}
               variant="settings"
             />}
-            {account.status !== "CONNECTED" && <GmailConnectButton reconnect className="rounded-lg border border-black/10 px-3 py-2 text-sm">Reconnect</GmailConnectButton>}
+            {account.status !== "CONNECTED" && <GmailConnectLink reconnect className="rounded-lg border border-black/10 px-3 py-2 text-sm">Reconnect</GmailConnectLink>}
             {account.status !== "DISCONNECTED" && <DisconnectGmailForm accountId={account.id} />}
           </div>
         </div>

@@ -17,7 +17,7 @@ import { ConversationControls } from "./conversation-controls";
 import { ConversationIntelligenceCard } from "./conversation-intelligence-card";
 import { completeTaskAction } from "@/app/actions/task-actions";
 import { TaskDue } from "@/app/tasks/task-due";
-import { GmailConnectButton } from "@/app/gmail-connect-button";
+import { GmailConnectLink } from "@/app/gmail-connect-link";
 
 const reviews = ["NEEDS_REVIEW", "MATCHED", "IGNORED", "RESOLVED"] as const;
 const classifications = ["UNKNOWN", "LEAD", "CUSTOMER", "NEWSLETTER", "SPAM", "INTERNAL", "SYSTEM"] as const;
@@ -92,10 +92,10 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
             fallbackError={gmail.lastSyncError}
           />
         : <div className="text-right">
-            <GmailConnectButton reconnect className="rounded-xl border border-amber-300 px-4 py-2.5 text-sm font-semibold text-amber-800 dark:text-amber-300">Reconnect Gmail</GmailConnectButton>
+            <GmailConnectLink reconnect className="rounded-xl border border-amber-300 px-4 py-2.5 text-sm font-semibold text-amber-800 dark:text-amber-300">Reconnect Gmail</GmailConnectLink>
             <p aria-live="polite" className="mt-2 max-w-md text-xs text-red-700 dark:text-red-300">{gmail.lastSyncError ?? "Reconnect Gmail to resume synchronization."}</p>
           </div>
-        : <Link href="/settings" className="rounded-xl bg-[#17181c] px-4 py-2.5 text-sm font-semibold text-white">Connect Gmail in Settings</Link>}
+        : <GmailConnectLink className="rounded-xl bg-[#17181c] px-4 py-2.5 text-sm font-semibold text-white">Connect Gmail</GmailConnectLink>}
     </header>
 
     <div className="inbox-shell mt-7 overflow-hidden rounded-2xl border border-black/[0.07] bg-white shadow-[0_8px_30px_rgba(23,24,28,0.035)] lg:grid lg:min-h-[680px] lg:grid-cols-[minmax(340px,420px)_minmax(0,1fr)]">
