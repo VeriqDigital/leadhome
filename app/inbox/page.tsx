@@ -20,6 +20,7 @@ import { completeTaskAction } from "@/app/actions/task-actions";
 import { TaskDue } from "@/app/tasks/task-due";
 import { GmailConnectLink } from "@/app/gmail-connect-link";
 import { LeadMatchSuggestions } from "./lead-match-suggestions";
+import { conversationMatchPresentation } from "./match-presentation";
 
 const reviews = ["NEEDS_REVIEW", "MATCHED", "IGNORED", "RESOLVED"] as const;
 const classifications = ["UNKNOWN", "LEAD", "CUSTOMER", "NEWSLETTER", "SPAM", "INTERNAL", "SYSTEM"] as const;
@@ -118,23 +119,36 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
           {hasFilters && <Link href="/inbox" className="inline-block text-xs font-semibold text-[#687080] underline">Clear search and filters</Link>}
         </form>
         <div>
-          {list.items.map((conversation) => <Link
-            key={conversation.id} href={href(params, { conversation: conversation.id })}
-            aria-current={selectedId === conversation.id ? "true" : undefined}
-            className={`inbox-row block border-b border-black/[0.06] p-4 focus-visible:outline focus-visible:outline-2 ${selectedId === conversation.id ? "inbox-row-selected bg-[#f0effb]" : "hover:bg-black/[0.025]"}`}
-          >
-            <div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold">{conversation.subject ?? "No subject"}</h2>
-              <time className="shrink-0 text-[11px] text-[#7c828d]">
-                {conversationMessageDate(conversation)
-                  ? compactDate.format(conversationMessageDate(conversation)!)
-                  : "No message date."}
-              </time></div>
-            <p className="mt-1 truncate text-xs font-medium text-[#565d69]">{conversation.latestMessage?.sender ?? "No participant"}</p>
-            <p className="mt-1 line-clamp-2 text-xs leading-5 text-[#777e89]">{conversation.latestMessage?.bodyPreview ?? "No message preview"}</p>
-            <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]"><Badge text={label(conversation.provider)}/><Badge text={label(conversation.classification)}/><Badge text={label(conversation.reviewState)}/>
-              {conversation.lead && <Badge text={conversation.lead.name}/>}
-              {!conversation.lead && conversation.matchKind === "AMBIGUOUS" && <Badge text="Possible match"/>}</div>
-          </Link>)}
+          {list.items.map((conversation) => {
+            const presentation = conversationMatchPresentation({
+              leadId: conversation.lead?.id ?? null,
+              manuallyDetached:
+                selectedId === conversation.id
+                  ? detail?.manuallyDetached ?? false
+                  : false,
+              persistedKind: conversation.matchKind,
+              persistedReason: null,
+              evaluatedMatch:
+                selectedId === conversation.id ? leadMatch : null,
+            });
+            return <Link
+              key={conversation.id} href={href(params, { conversation: conversation.id })}
+              aria-current={selectedId === conversation.id ? "true" : undefined}
+              className={`inbox-row block border-b border-black/[0.06] p-4 focus-visible:outline focus-visible:outline-2 ${selectedId === conversation.id ? "inbox-row-selected bg-[#f0effb]" : "hover:bg-black/[0.025]"}`}
+            >
+              <div className="flex items-start justify-between gap-3"><h2 className="truncate text-sm font-semibold">{conversation.subject ?? "No subject"}</h2>
+                <time className="shrink-0 text-[11px] text-[#7c828d]">
+                  {conversationMessageDate(conversation)
+                    ? compactDate.format(conversationMessageDate(conversation)!)
+                    : "No message date."}
+                </time></div>
+              <p className="mt-1 truncate text-xs font-medium text-[#565d69]">{conversation.latestMessage?.sender ?? "No participant"}</p>
+              <p className="mt-1 line-clamp-2 text-xs leading-5 text-[#777e89]">{conversation.latestMessage?.bodyPreview ?? "No message preview"}</p>
+              <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]"><Badge text={label(conversation.provider)}/><Badge text={label(conversation.classification)}/><Badge text={label(conversation.reviewState)}/>
+                {conversation.lead && <Badge text={conversation.lead.name}/>}
+                {presentation.badge && <Badge text={presentation.badge}/>}</div>
+            </Link>;
+          })}
           {!list.items.length && <div className="p-10 text-center text-sm text-[#687080]">{filters.query ? "No conversations match this search." : hasFilters ? "No conversations match these filters." : gmail?.lastImportedAt ? "No conversations have been imported." : "Sync Gmail to import conversations."}</div>}
         </div>
         <nav aria-label="Inbox pagination" className="flex items-center justify-between p-4 text-sm">
@@ -172,13 +186,20 @@ function ConversationDetail({
   leadMatch: Awaited<ReturnType<typeof evaluateStoredConversationMatch>>;
 }) {
   const recipients = [...new Set(detail.messages.flatMap((message) => Array.isArray(message.recipients) ? message.recipients.filter((item): item is string => typeof item === "string") : []))];
+  const matchPresentation = conversationMatchPresentation({
+    leadId: detail.lead?.id ?? null,
+    manuallyDetached: detail.manuallyDetached,
+    persistedKind: detail.matchKind,
+    persistedReason: detail.matchReason,
+    evaluatedMatch: leadMatch,
+  });
   return <div>
     <header className="inbox-detail-header border-b border-black/[0.07] p-5 sm:p-6"><Link href={backHref} className="mb-4 inline-block text-sm font-semibold underline lg:hidden">← Back to inbox</Link>
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">{detail.subject ?? "No subject"}</h2><p className="mt-1 text-sm text-[#687080]">{label(detail.provider)} · {detail.account.address ?? detail.account.displayName}</p></div>
         <div className="flex flex-wrap gap-1.5 text-xs"><Badge text={label(detail.status)}/><Badge text={label(detail.classification)}/><Badge text={label(detail.reviewState)}/></div></div>
       <p className="mt-3 text-xs text-[#687080]">Participants: {recipients.join(", ") || detail.messages.map((message) => message.sender).filter((value, index, all) => all.indexOf(value) === index).join(", ") || "Unknown"}</p>
       <div className="inbox-match mt-4 rounded-xl bg-[#f7f7f5] p-3 text-sm"><p><span className="font-semibold">Attached lead:</span> {detail.lead?.name ?? "None"}</p>
-        <p className="mt-1 text-[#687080]"><span className="font-semibold text-[#343840]">Match:</span> {detail.manuallyDetached ? "Manually detached." : detail.matchReason ?? (detail.matchKind === "NO_MATCH" ? "No external participant matched." : "No match result is available.")}</p>
+        <p className="mt-1 text-[#687080]"><span className="font-semibold text-[#343840]">Match:</span> {matchPresentation.summary}</p>
       </div>
       {!detail.lead && (
         <LeadMatchSuggestions
@@ -187,6 +208,7 @@ function ConversationDetail({
           canRecheck={
             !detail.manuallyDetached && detail.reviewState === "NEEDS_REVIEW"
           }
+          manuallyDetached={detail.manuallyDetached}
         />
       )}
       <ConversationControls

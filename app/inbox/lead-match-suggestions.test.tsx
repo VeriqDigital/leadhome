@@ -8,13 +8,14 @@ import type {
 import { LeadMatchSuggestions } from "./lead-match-suggestions";
 
 const actions = vi.hoisted(() => ({
+  allowConversationMatchingAgainAction: vi.fn(),
   attachInboxAction: vi.fn(),
   dismissConversationMatchAction: vi.fn(),
   recheckConversationMatchesAction: vi.fn(),
 }));
 const hooks = vi.hoisted(() => ({
   call: 0,
-  pending: [false, false, false] as boolean[],
+  pending: [false, false, false, false] as boolean[],
 }));
 
 vi.mock("@/app/actions/inbox-actions", () => actions);
@@ -57,13 +58,18 @@ const candidate = (
   ...overrides,
 });
 
-function render(match: LeadMatchResult | null, canRecheck = true) {
+function render(
+  match: LeadMatchResult | null,
+  canRecheck = true,
+  manuallyDetached = false,
+) {
   hooks.call = 0;
   return renderToStaticMarkup(
     <LeadMatchSuggestions
       conversationId="conversation-a"
       match={match}
       canRecheck={canRecheck}
+      manuallyDetached={manuallyDetached}
     />,
   );
 }
@@ -72,7 +78,7 @@ describe("Smart Lead Match Inbox UI", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     hooks.call = 0;
-    hooks.pending = [false, false, false];
+    hooks.pending = [false, false, false, false];
   });
 
   it("renders an exact match with explainable evidence and the canonical lead controls", () => {
@@ -173,6 +179,36 @@ describe("Smart Lead Match Inbox UI", () => {
     expect(render(noMatch, false)).toBe("");
   });
 
+  it("renders an accessible recovery control only for a manual detach", () => {
+    const detached: LeadMatchResult = {
+      kind: "NO_MATCH",
+      automaticMatch: null,
+      possibleMatches: [],
+      noMatch: {
+        code: "MANUALLY_DETACHED",
+        reason: "Conversation was manually detached",
+      },
+      reason: "Conversation was manually detached",
+      evidenceFingerprint: "conversation-fingerprint",
+    };
+
+    const markup = render(detached, false, true);
+
+    expect(markup).toContain(
+      "Automatic matching is paused because this conversation was manually detached.",
+    );
+    expect(markup).toContain('aria-label="Allow matching again"');
+    expect(markup).toContain("Allow matching again");
+    expect(markup).not.toContain("Recheck matches");
+
+    hooks.pending = [false, false, false, true];
+    const pending = render(detached, false, true);
+    expect(pending).toContain("Allowing matching…");
+    expect(pending).toMatch(
+      /<button[^>]*aria-label="Allow matching again"[^>]*disabled=""/,
+    );
+  });
+
   it("disables actions and exposes a clear label while each request is pending", () => {
     const possible: LeadMatchResult = {
       kind: "AMBIGUOUS",
@@ -183,22 +219,24 @@ describe("Smart Lead Match Inbox UI", () => {
       evidenceFingerprint: "conversation-fingerprint",
     };
 
-    hooks.pending = [true, false, false];
+    hooks.pending = [true, false, false, false];
     const attaching = render(possible);
     expect(attaching).toContain("Attaching…");
     expect(attaching).toMatch(/<button disabled=""[^>]*>Attaching…<\/button>/);
 
-    hooks.pending = [false, true, false];
+    hooks.pending = [false, true, false, false];
     const dismissing = render(possible);
     expect(dismissing).toContain("Dismissing…");
     expect(dismissing).toMatch(
       /<button disabled=""[^>]*>Dismissing…<\/button>/,
     );
 
-    hooks.pending = [false, false, true];
+    hooks.pending = [false, false, true, false];
     const rechecking = render(possible);
     expect(rechecking).toContain("Checking…");
-    expect(rechecking).toMatch(/<button disabled=""[^>]*>Checking…<\/button>/);
+    expect(rechecking).toMatch(
+      /<button[^>]*disabled=""[^>]*>Checking…<\/button>/,
+    );
   });
 
   it("integrates only a bounded read evaluation into Inbox rendering", () => {
@@ -209,9 +247,28 @@ describe("Smart Lead Match Inbox UI", () => {
     );
     expect(source).toContain("<LeadMatchSuggestions");
     expect(source).toContain(
-      'conversation.matchKind === "AMBIGUOUS" && <Badge text="Possible match"',
+      "conversationMatchPresentation({",
+    );
+    expect(source).toContain(
+      "{presentation.badge && <Badge text={presentation.badge}/>",
     );
     expect(source).not.toContain("reevaluateConversationLeadMatch(");
     expect(source).not.toContain("dismissConversationLeadMatch(");
+  });
+
+  it("uses Recheck matches consistently for every recheck control", () => {
+    const possible: LeadMatchResult = {
+      kind: "AMBIGUOUS",
+      automaticMatch: null,
+      possibleMatches: [candidate()],
+      noMatch: null,
+      reason: "Possible match",
+      evidenceFingerprint: "conversation-fingerprint",
+    };
+    const markup = render(possible);
+
+    expect(markup).toContain('aria-label="Recheck matches"');
+    expect(markup).toContain(">Recheck matches</button>");
+    expect(markup).not.toContain(">Recheck</button>");
   });
 });

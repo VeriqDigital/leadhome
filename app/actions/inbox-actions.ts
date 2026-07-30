@@ -14,8 +14,10 @@ import {
   type PersistedConversationMutation,
 } from "@/lib/messaging/conversation-control-service";
 import {
+  allowConversationMatchingAgain,
   dismissConversationLeadMatch,
   reevaluateConversationLeadMatch,
+  type PersistedConversationMatchState,
 } from "@/lib/messaging/matching-service";
 import type { InboxMutationState } from "@/app/inbox/mutation-state";
 
@@ -24,6 +26,7 @@ export type SmartMatchMutationState = {
   success: boolean;
   changed?: boolean;
   message: string;
+  conversation?: PersistedConversationMatchState;
 };
 
 const schemas = {
@@ -155,30 +158,40 @@ export async function recheckConversationMatchesAction(
       parsed.data.conversationId,
     );
     revalidatePath("/inbox");
-    if (result.attached) {
-      revalidatePath("/leads");
-      if (result.match.kind === "MATCHED") {
-        revalidatePath(`/leads/${result.match.automaticMatch.leadId}`);
-      }
+    if (result.conversation.manuallyDetached) {
       return {
-        success: true,
-        changed: true,
-        message: "The exact match was attached.",
+        success: false,
+        changed: false,
+        message: "Automatic matching is still paused.",
+        conversation: result.conversation,
       };
     }
-    if (result.match.kind === "AMBIGUOUS") {
+    if (result.conversation.leadId) {
+      revalidatePath("/leads");
+      revalidatePath(`/leads/${result.conversation.leadId}`);
       return {
         success: true,
         changed: result.changed,
-        message: `${result.match.possibleMatches.length} possible match${
-          result.match.possibleMatches.length === 1 ? "" : "es"
-        } found.`,
+        message: result.attached
+          ? "The exact match was attached."
+          : "Conversation is already attached.",
+        conversation: result.conversation,
+      };
+    }
+    if (result.conversation.matchKind === "AMBIGUOUS") {
+      const count = result.conversation.matchCandidateLeadIds.length;
+      return {
+        success: true,
+        changed: result.changed,
+        message: `${count} possible match${count === 1 ? "" : "es"} found.`,
+        conversation: result.conversation,
       };
     }
     return {
       success: true,
       changed: result.changed,
       message: "No credible match was found.",
+      conversation: result.conversation,
     };
   } catch {
     return {
@@ -206,14 +219,75 @@ export async function dismissConversationMatchAction(
     return {
       success: true,
       changed: result.changed,
-      message: result.remaining.length
+      message: result.conversation.matchKind === "AMBIGUOUS"
         ? "Suggestion dismissed. Other possible matches remain."
         : "Suggestion dismissed.",
+      conversation: result.conversation,
     };
   } catch {
     return {
       success: false,
       message: "That suggestion could not be dismissed.",
+    };
+  }
+}
+
+export async function allowConversationMatchingAgainAction(
+  _state: SmartMatchMutationState,
+  formData: FormData,
+): Promise<SmartMatchMutationState> {
+  const parsed = schemas.conversation.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) {
+    return { success: false, message: "Choose a valid conversation." };
+  }
+  const user = await requireUser();
+  try {
+    const result = await allowConversationMatchingAgain(
+      user.id,
+      parsed.data.conversationId,
+    );
+    revalidatePath("/inbox");
+    if (result.conversation.leadId) {
+      revalidatePath("/leads");
+      revalidatePath(`/leads/${result.conversation.leadId}`);
+      return {
+        success: true,
+        changed: result.suppressionCleared || result.changed,
+        message: result.attached
+          ? "Automatic matching resumed and the exact match was attached."
+          : "Conversation is already attached.",
+        conversation: result.conversation,
+      };
+    }
+    if (result.conversation.manuallyDetached) {
+      return {
+        success: false,
+        changed: false,
+        message: "Automatic matching could not be resumed. Please try again.",
+        conversation: result.conversation,
+      };
+    }
+    if (result.conversation.matchKind === "AMBIGUOUS") {
+      const count = result.conversation.matchCandidateLeadIds.length;
+      return {
+        success: true,
+        changed: result.suppressionCleared || result.changed,
+        message: `Automatic matching resumed. ${count} possible match${
+          count === 1 ? "" : "es"
+        } found.`,
+        conversation: result.conversation,
+      };
+    }
+    return {
+      success: true,
+      changed: result.suppressionCleared || result.changed,
+      message: "Automatic matching resumed. No credible match was found.",
+      conversation: result.conversation,
+    };
+  } catch {
+    return {
+      success: false,
+      message: "Automatic matching could not be resumed. Please try again.",
     };
   }
 }

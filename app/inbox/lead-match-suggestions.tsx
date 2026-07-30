@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useActionState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import {
+  allowConversationMatchingAgainAction,
   attachInboxAction,
   dismissConversationMatchAction,
   recheckConversationMatchesAction,
@@ -109,10 +110,12 @@ export function LeadMatchSuggestions({
   conversationId,
   match,
   canRecheck,
+  manuallyDetached,
 }: {
   conversationId: string;
   match: LeadMatchResult | null;
   canRecheck: boolean;
+  manuallyDetached: boolean;
 }) {
   const router = useRouter();
   const [attachState, attachAction, attaching] = useActionState(
@@ -127,16 +130,21 @@ export function LeadMatchSuggestions({
     recheckConversationMatchesAction,
     initialSmartMatchState,
   );
+  const [recoveryState, recoveryAction, recovering] = useActionState(
+    allowConversationMatchingAgainAction,
+    initialSmartMatchState,
+  );
 
   useEffect(() => {
     if (
       (attachState.success && attachState.changed) ||
       dismissState.success ||
-      recheckState.success
+      recheckState.success ||
+      recoveryState.success
     ) {
       router.refresh();
     }
-  }, [attachState, dismissState, recheckState, router]);
+  }, [attachState, dismissState, recheckState, recoveryState, router]);
 
   const candidates = match?.kind === "MATCHED"
     ? [match.automaticMatch]
@@ -149,7 +157,43 @@ export function LeadMatchSuggestions({
       ? dismissState
       : recheckState.message
         ? recheckState
+        : recoveryState.message
+          ? recoveryState
         : null;
+
+  if (manuallyDetached) {
+    return (
+      <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-xs dark:border-amber-800/70 dark:bg-amber-950/20">
+        <p className="text-amber-950 dark:text-amber-100">
+          Automatic matching is paused because this conversation was manually
+          detached.
+        </p>
+        <form action={recoveryAction} className="mt-3">
+          <input type="hidden" name="conversationId" value={conversationId} />
+          <button
+            aria-label="Allow matching again"
+            disabled={recovering}
+            className="cursor-pointer rounded-lg border border-amber-300 px-3 py-2 font-semibold text-amber-950 disabled:cursor-wait disabled:opacity-60 dark:border-amber-700 dark:text-amber-100"
+          >
+            {recovering ? "Allowing matching…" : "Allow matching again"}
+          </button>
+        </form>
+        {result && (
+          <p
+            role={result.success ? "status" : "alert"}
+            aria-live="polite"
+            className={`mt-3 ${
+              result.success
+                ? "text-emerald-700 dark:text-emerald-300"
+                : "text-red-700 dark:text-red-300"
+            }`}
+          >
+            {result.message}
+          </p>
+        )}
+      </div>
+    );
+  }
 
   if (!candidates.length) {
     if (!canRecheck) return null;
@@ -161,6 +205,7 @@ export function LeadMatchSuggestions({
         <form action={recheckAction}>
           <input type="hidden" name="conversationId" value={conversationId} />
           <button
+            aria-label="Recheck matches"
             disabled={rechecking}
             className="cursor-pointer rounded-lg border border-black/10 px-3 py-2 font-semibold disabled:cursor-wait disabled:opacity-60 dark:border-white/15"
           >
@@ -205,10 +250,11 @@ export function LeadMatchSuggestions({
           <form action={recheckAction}>
             <input type="hidden" name="conversationId" value={conversationId} />
             <button
+              aria-label="Recheck matches"
               disabled={rechecking || attaching || dismissing}
               className="cursor-pointer rounded-lg border border-amber-300 px-3 py-2 text-xs font-semibold text-amber-950 disabled:cursor-wait disabled:opacity-60 dark:border-amber-700 dark:text-amber-100"
             >
-              {rechecking ? "Checking…" : "Recheck"}
+              {rechecking ? "Checking…" : "Recheck matches"}
             </button>
           </form>
         )}

@@ -38,14 +38,29 @@ choose-another-lead flow, and a dismiss action. Inbox rows can show a compact
 Possible match state without expanding the list query.
 
 The latest result is cached in the existing conversation match fields. An
-explicit authenticated, owner-scoped Recheck action evaluates only the
+explicit authenticated, owner-scoped **Recheck matches** action evaluates only the
 selected conversation and at most 100 identity-only inbound messages, so
 conversations imported before this feature can be reconsidered without an
 unbounded owner scan. The detail page may compute a bounded read-only current
-view, but rendering does not persist match state. A manual attachment always
-wins, a manual detach blocks automatic reattachment, and dismissing a candidate
-suppresses the same candidate/evidence fingerprint until meaningful identity
-evidence changes.
+view, but rendering does not persist match state. The top summary, suggestion
+panel, and selected row badge are derived from that same server result so a
+fresh suggestion cannot contradict a stale cached label. Matching mutations
+return the bounded canonical persisted state, revalidate the Inbox, and refresh
+the server-rendered view.
+
+A manual attachment always wins, and a manual detach continues to block
+automatic reattachment. A manually detached, unattached conversation shows an
+explicit **Allow matching again** control. The owner-scoped action clears only
+the detach suppression and cached match result, restores normal review, and
+immediately calls the existing centralized matcher. Repeated or concurrent
+requests cannot overwrite a newer attachment. Clearing the block or
+recalculating suggestions creates no activity; an actual unique-email
+automatic attachment continues through the existing idempotent activity and
+Conversation Intelligence enqueue behavior. Existing dismissal fingerprints
+remain in force.
+
+Dismissing a candidate suppresses the same candidate/evidence fingerprint
+until meaningful identity evidence changes.
 
 Candidate calculation, display, reordering, dismissal, and no-match results do
 not create activity; confirmed automatic and user-approved attachments

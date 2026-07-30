@@ -1,7 +1,11 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { Prisma } from "@prisma/client";
+import {
+  Prisma,
+  type ConversationMatchKind,
+  type ConversationReviewState,
+} from "@prisma/client";
 import { hashSecret } from "@/lib/inbound-crypto";
 import { prisma } from "@/lib/prisma";
 import { recordActivity } from "@/lib/activity-service";
@@ -618,6 +622,41 @@ function persistedCandidateIds(value: Prisma.JsonValue | null) {
     : [];
 }
 
+export type PersistedConversationMatchState = {
+  id: string;
+  leadId: string | null;
+  manuallyDetached: boolean;
+  reviewState: ConversationReviewState;
+  matchKind: ConversationMatchKind | null;
+  matchReason: string | null;
+  matchCandidateLeadIds: string[];
+};
+
+async function readPersistedConversationMatchState(
+  ownerId: string,
+  conversationId: string,
+): Promise<PersistedConversationMatchState> {
+  const conversation = await prisma.conversation.findFirst({
+    where: { id: conversationId, ownerId },
+    select: {
+      id: true,
+      leadId: true,
+      manuallyDetached: true,
+      reviewState: true,
+      matchKind: true,
+      matchReason: true,
+      matchCandidateLeadIds: true,
+    },
+  });
+  if (!conversation) throw new Error("Conversation not found.");
+  return {
+    ...conversation,
+    matchCandidateLeadIds: persistedCandidateIds(
+      conversation.matchCandidateLeadIds,
+    ),
+  };
+}
+
 export async function applyConversationLeadMatch({
   ownerId,
   conversationId,
@@ -772,7 +811,11 @@ export async function reevaluateConversationLeadMatch(
     conversationId,
     match,
   });
-  return { match, ...applied };
+  const conversation = await readPersistedConversationMatchState(
+    ownerId,
+    conversationId,
+  );
+  return { match, ...applied, conversation };
 }
 
 export async function dismissConversationLeadMatch({
@@ -795,7 +838,7 @@ export async function dismissConversationLeadMatch({
     throw new Error("Match suggestion is no longer available.");
   }
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const [conversation, lead] = await Promise.all([
       tx.conversation.findFirst({
         where: {
@@ -838,8 +881,8 @@ export async function dismissConversationLeadMatch({
       data: {
         matchKind: remaining.length ? "AMBIGUOUS" : "NO_MATCH",
         matchReason: remaining.length
-          ? "Possible lead matches found"
-          : "Suggested matches dismissed",
+          ? match.reason
+          : "Suggested matches were dismissed for the same evidence",
         matchCandidateLeadIds: remaining.length
           ? remaining.map((item) => item.leadId) as Prisma.InputJsonValue
           : Prisma.JsonNull,
@@ -847,4 +890,87 @@ export async function dismissConversationLeadMatch({
     });
     return { changed: created.count === 1, remaining };
   });
+  const conversation = await readPersistedConversationMatchState(
+    ownerId,
+    conversationId,
+  );
+  return { ...result, conversation };
+}
+
+export async function allowConversationMatchingAgain(
+  ownerId: string,
+  conversationId: string,
+) {
+  const preparation = await prisma.$transaction(async (tx) => {
+    const current = await tx.conversation.findFirst({
+      where: { id: conversationId, ownerId },
+      select: { id: true, leadId: true, manuallyDetached: true },
+    });
+    if (!current) throw new Error("Conversation not found.");
+    if (current.leadId) {
+      return { suppressionCleared: false, alreadyAttached: true };
+    }
+    if (!current.manuallyDetached) {
+      return { suppressionCleared: false, alreadyAttached: false };
+    }
+
+    const cleared = await tx.conversation.updateMany({
+      where: {
+        id: conversationId,
+        ownerId,
+        leadId: null,
+        manuallyDetached: true,
+      },
+      data: {
+        manuallyDetached: false,
+        reviewState: "NEEDS_REVIEW",
+        matchKind: null,
+        matchReason: null,
+        matchCandidateLeadIds: Prisma.JsonNull,
+      },
+    });
+    if (cleared.count === 1) {
+      return { suppressionCleared: true, alreadyAttached: false };
+    }
+
+    const canonical = await tx.conversation.findFirst({
+      where: { id: conversationId, ownerId },
+      select: { leadId: true, manuallyDetached: true },
+    });
+    if (!canonical) throw new Error("Conversation not found.");
+    if (canonical.leadId) {
+      return { suppressionCleared: false, alreadyAttached: true };
+    }
+    if (canonical.manuallyDetached) {
+      throw new Error("Manual detach could not be cleared.");
+    }
+    return { suppressionCleared: false, alreadyAttached: false };
+  });
+
+  if (preparation.alreadyAttached) {
+    return {
+      ...preparation,
+      changed: false,
+      attached: false,
+      matched: true,
+      needsReview: false,
+      match: null,
+      conversation: await readPersistedConversationMatchState(
+        ownerId,
+        conversationId,
+      ),
+    };
+  }
+
+  const reevaluated = await reevaluateConversationLeadMatch(
+    ownerId,
+    conversationId,
+  );
+  return {
+    ...reevaluated,
+    suppressionCleared: preparation.suppressionCleared,
+    alreadyAttached: Boolean(
+      reevaluated.conversation.leadId && !reevaluated.attached,
+    ),
+  };
 }

@@ -46,6 +46,7 @@ import {
   MAX_MATCH_QUERY_ROWS,
   MAX_POSSIBLE_MATCHES,
   MAX_REEVALUATION_MESSAGES,
+  allowConversationMatchingAgain,
   applyConversationLeadMatch,
   dismissConversationLeadMatch,
   evaluateStoredConversationMatch,
@@ -622,8 +623,84 @@ describe("Smart Lead Matching", () => {
       where: { id: "lead-a", userId: "owner-a" },
       select: { id: true },
     });
+    expect(mocks.tx.conversation.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "conversation-a",
+        ownerId: "owner-a",
+        leadId: null,
+        manuallyDetached: false,
+        reviewState: "NEEDS_REVIEW",
+      },
+      data: {
+        matchKind: "NO_MATCH",
+        matchReason:
+          "Suggested matches were dismissed for the same evidence",
+        matchCandidateLeadIds: expect.anything(),
+      },
+    });
     expect(mocks.recordActivity).not.toHaveBeenCalled();
     expect(mocks.enqueueAnalysis).not.toHaveBeenCalled();
+  });
+
+  it("persists the same ambiguous reason and remaining candidates shown after dismissal", async () => {
+    const alpha = lead("lead-a", "Alpha", "shared@example.com");
+    const beta = lead("lead-b", "Beta", "shared@example.com");
+    mockEvidenceRows({ emails: [alpha, beta] });
+    mocks.findConversation
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: null,
+        manuallyDetached: false,
+        account: { address: "inbox@leadhome.test" },
+        messages: [{
+          direction: "INBOUND",
+          sender: "shared@example.com",
+          replyTo: null,
+          externalSubmissionId: null,
+        }],
+      })
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: null,
+        manuallyDetached: false,
+        reviewState: "NEEDS_REVIEW",
+        matchKind: "AMBIGUOUS",
+        matchReason: "Multiple leads share this email",
+        matchCandidateLeadIds: ["lead-b"],
+      });
+    mocks.tx.conversation.findFirst.mockResolvedValue({
+      id: "conversation-a",
+    });
+    mocks.tx.lead.findFirst.mockResolvedValue({ id: "lead-a" });
+
+    const result = await dismissConversationLeadMatch({
+      ownerId: "owner-a",
+      conversationId: "conversation-a",
+      leadId: "lead-a",
+    });
+
+    expect(result).toMatchObject({
+      remaining: [{ leadId: "lead-b" }],
+      conversation: {
+        matchKind: "AMBIGUOUS",
+        matchReason: "Multiple leads share this email",
+        matchCandidateLeadIds: ["lead-b"],
+      },
+    });
+    expect(mocks.tx.conversation.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: "conversation-a",
+        ownerId: "owner-a",
+        leadId: null,
+        manuallyDetached: false,
+        reviewState: "NEEDS_REVIEW",
+      },
+      data: {
+        matchKind: "AMBIGUOUS",
+        matchReason: "Multiple leads share this email",
+        matchCandidateLeadIds: ["lead-b"],
+      },
+    });
   });
 
   it("finds exactly one owner-scoped website submission and bounds ambiguity", async () => {
@@ -655,6 +732,287 @@ describe("Smart Lead Matching", () => {
       ownerId: "owner-a",
       externalSubmissionId: "contact-12345",
     })).resolves.toBeNull();
+  });
+
+  it("clears only owned manual-detach match state and returns to ordinary no-match review", async () => {
+    mocks.tx.conversation.findFirst
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: null,
+        manuallyDetached: true,
+      })
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: null,
+        subject: "Preserved subject",
+        provider: "GMAIL",
+        reviewState: "NEEDS_REVIEW",
+        manuallyDetached: false,
+        matchKind: null,
+        matchReason: null,
+        matchCandidateLeadIds: null,
+      });
+    mocks.findConversation
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: null,
+        manuallyDetached: false,
+        account: { address: "inbox@leadhome.test" },
+        messages: [{
+          direction: "INBOUND",
+          sender: "inbox@leadhome.test",
+          replyTo: null,
+          externalSubmissionId: null,
+        }],
+      })
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: null,
+        manuallyDetached: false,
+        reviewState: "NEEDS_REVIEW",
+        matchKind: "NO_MATCH",
+        matchReason: "No external participant identity was found",
+        matchCandidateLeadIds: null,
+      });
+
+    const result = await allowConversationMatchingAgain(
+      "owner-a",
+      "conversation-a",
+    );
+
+    expect(result).toMatchObject({
+      suppressionCleared: true,
+      alreadyAttached: false,
+      attached: false,
+      match: {
+        kind: "NO_MATCH",
+        noMatch: { code: "NO_EXTERNAL_IDENTITY" },
+      },
+      conversation: {
+        manuallyDetached: false,
+        reviewState: "NEEDS_REVIEW",
+        matchKind: "NO_MATCH",
+        matchCandidateLeadIds: [],
+      },
+    });
+    expect(mocks.tx.conversation.findFirst).toHaveBeenNthCalledWith(1, {
+      where: { id: "conversation-a", ownerId: "owner-a" },
+      select: { id: true, leadId: true, manuallyDetached: true },
+    });
+    expect(mocks.tx.conversation.updateMany).toHaveBeenNthCalledWith(1, {
+      where: {
+        id: "conversation-a",
+        ownerId: "owner-a",
+        leadId: null,
+        manuallyDetached: true,
+      },
+      data: {
+        manuallyDetached: false,
+        reviewState: "NEEDS_REVIEW",
+        matchKind: null,
+        matchReason: null,
+        matchCandidateLeadIds: expect.anything(),
+      },
+    });
+    expect(mocks.recordActivity).not.toHaveBeenCalled();
+    expect(mocks.enqueueAnalysis).not.toHaveBeenCalled();
+  });
+
+  it("returns ambiguous suggestions after recovery without bypassing dismissals", async () => {
+    const alpha = lead("lead-a", "Alpha", "shared@example.com");
+    const beta = lead("lead-b", "Beta", "shared@example.com");
+    mockEvidenceRows({ emails: [alpha, beta] });
+    mocks.tx.conversation.findFirst
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: null,
+        manuallyDetached: true,
+      })
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: null,
+        subject: "Shared",
+        provider: "GMAIL",
+        reviewState: "NEEDS_REVIEW",
+        manuallyDetached: false,
+        matchKind: null,
+        matchReason: null,
+        matchCandidateLeadIds: null,
+      });
+    mocks.findConversation
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: null,
+        manuallyDetached: false,
+        account: { address: "inbox@leadhome.test" },
+        messages: [{
+          direction: "INBOUND",
+          sender: "shared@example.com",
+          replyTo: null,
+          externalSubmissionId: null,
+        }],
+      })
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: null,
+        manuallyDetached: false,
+        reviewState: "NEEDS_REVIEW",
+        matchKind: "AMBIGUOUS",
+        matchReason: "Multiple leads share this email",
+        matchCandidateLeadIds: ["lead-b"],
+      });
+    const initial = await findMatch({
+      messages: [inbound("shared@example.com")],
+    });
+    if (initial.kind !== "AMBIGUOUS") throw new Error("Expected ambiguity");
+    const dismissed = initial.possibleMatches.find(
+      (candidate) => candidate.leadId === "lead-a",
+    )!;
+    mocks.findDismissals.mockResolvedValue([{
+      leadId: dismissed.leadId,
+      evidenceFingerprint: dismissed.evidenceFingerprint,
+    }]);
+
+    const result = await allowConversationMatchingAgain(
+      "owner-a",
+      "conversation-a",
+    );
+
+    expect(result.match?.kind).toBe("AMBIGUOUS");
+    if (!result.match || result.match.kind !== "AMBIGUOUS") {
+      throw new Error("Expected ambiguity");
+    }
+    expect(result.match.possibleMatches.map(({ leadId }) => leadId))
+      .toEqual(["lead-b"]);
+    expect(result.conversation.matchCandidateLeadIds).toEqual(["lead-b"]);
+    expect(mocks.recordActivity).not.toHaveBeenCalled();
+  });
+
+  it("auto-attaches exactly once after recovery and keeps repeated recovery idempotent", async () => {
+    const jane = lead("lead-a", "Jane Doe", "jane@example.com");
+    mockEvidenceRows({ emails: [jane], names: [jane] });
+    mocks.tx.lead.findFirst.mockResolvedValue({ id: "lead-a" });
+    mocks.tx.conversation.findFirst
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: null,
+        manuallyDetached: true,
+      })
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: null,
+        subject: "Exact",
+        provider: "GMAIL",
+        reviewState: "NEEDS_REVIEW",
+        manuallyDetached: false,
+        matchKind: null,
+        matchReason: null,
+        matchCandidateLeadIds: null,
+      })
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: "lead-a",
+        manuallyDetached: false,
+      });
+    mocks.findConversation
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: null,
+        manuallyDetached: false,
+        account: { address: "inbox@leadhome.test" },
+        messages: [{
+          direction: "INBOUND",
+          sender: "Jane Doe <jane@example.com>",
+          replyTo: null,
+          externalSubmissionId: null,
+        }],
+      })
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: "lead-a",
+        manuallyDetached: false,
+        reviewState: "MATCHED",
+        matchKind: "MATCHED",
+        matchReason: "Exact sender email",
+        matchCandidateLeadIds: null,
+      })
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: "lead-a",
+        manuallyDetached: false,
+        reviewState: "MATCHED",
+        matchKind: "MATCHED",
+        matchReason: "Exact sender email",
+        matchCandidateLeadIds: null,
+      });
+
+    const first = await allowConversationMatchingAgain(
+      "owner-a",
+      "conversation-a",
+    );
+    const repeated = await allowConversationMatchingAgain(
+      "owner-a",
+      "conversation-a",
+    );
+
+    expect(first).toMatchObject({
+      suppressionCleared: true,
+      attached: true,
+      conversation: { leadId: "lead-a", matchKind: "MATCHED" },
+    });
+    expect(repeated).toMatchObject({
+      suppressionCleared: false,
+      alreadyAttached: true,
+      changed: false,
+    });
+    expect(mocks.recordActivity).toHaveBeenCalledOnce();
+    expect(mocks.recordActivity).toHaveBeenCalledWith(
+      mocks.tx,
+      expect.objectContaining({
+        ownerId: "owner-a",
+        leadId: "lead-a",
+        idempotencyKey: "conversation-auto-link:conversation-a:lead-a",
+      }),
+    );
+    expect(mocks.enqueueAnalysis).toHaveBeenCalledOnce();
+  });
+
+  it("cannot clear suppression after a concurrent attachment wins", async () => {
+    mocks.tx.conversation.findFirst
+      .mockResolvedValueOnce({
+        id: "conversation-a",
+        leadId: null,
+        manuallyDetached: true,
+      })
+      .mockResolvedValueOnce({
+        leadId: "lead-manual",
+        manuallyDetached: false,
+      });
+    mocks.tx.conversation.updateMany.mockResolvedValueOnce({ count: 0 });
+    mocks.findConversation.mockResolvedValueOnce({
+      id: "conversation-a",
+      leadId: "lead-manual",
+      manuallyDetached: false,
+      reviewState: "MATCHED",
+      matchKind: "MATCHED",
+      matchReason: "manually attached",
+      matchCandidateLeadIds: null,
+    });
+
+    const result = await allowConversationMatchingAgain(
+      "owner-a",
+      "conversation-a",
+    );
+
+    expect(result).toMatchObject({
+      suppressionCleared: false,
+      alreadyAttached: true,
+      changed: false,
+      conversation: { leadId: "lead-manual" },
+    });
+    expect(mocks.findLeads).not.toHaveBeenCalled();
+    expect(mocks.recordActivity).not.toHaveBeenCalled();
+    expect(mocks.enqueueAnalysis).not.toHaveBeenCalled();
   });
 
   it("ignores the account mailbox and outbound-only traffic", async () => {

@@ -9,6 +9,7 @@ const services = vi.hoisted(() => ({
   updateConversationControls: vi.fn(),
 }));
 const matching = vi.hoisted(() => ({
+  allowConversationMatchingAgain: vi.fn(),
   dismissConversationLeadMatch: vi.fn(),
   reevaluateConversationLeadMatch: vi.fn(),
 }));
@@ -24,6 +25,7 @@ vi.mock("next/cache", () => cache);
 
 import {
   attachInboxAction,
+  allowConversationMatchingAgainAction,
   dismissConversationMatchAction,
   recheckConversationMatchesAction,
   statusInboxAction,
@@ -40,6 +42,18 @@ const canonical = {
   reviewState: "NEEDS_REVIEW",
   status: "CLOSED",
   updatedAt: "2026-01-01T00:00:00.000Z",
+} as const;
+const canonicalMatch = {
+  id: canonical.id,
+  leadId: null,
+  manuallyDetached: false,
+  reviewState: "NEEDS_REVIEW",
+  matchKind: "AMBIGUOUS",
+  matchReason: "Multiple leads share this email",
+  matchCandidateLeadIds: [
+    leadId,
+    "cmrwxawgy0006j9kc6szawqx3",
+  ],
 } as const;
 
 describe("Inbox server action contracts", () => {
@@ -156,6 +170,7 @@ describe("Inbox server action contracts", () => {
         reason: "Multiple leads share this email",
         evidenceFingerprint: "evidence-a",
       },
+      conversation: canonicalMatch,
     });
     const data = new FormData();
     data.set("conversationId", canonical.id);
@@ -174,6 +189,7 @@ describe("Inbox server action contracts", () => {
       success: true,
       changed: true,
       message: "2 possible matches found.",
+      conversation: canonicalMatch,
     });
   });
 
@@ -215,6 +231,10 @@ describe("Inbox server action contracts", () => {
     matching.dismissConversationLeadMatch.mockResolvedValue({
       changed: true,
       remaining: [{ leadId: "cmrwxawgy0006j9kc6szawqx3" }],
+      conversation: {
+        ...canonicalMatch,
+        matchCandidateLeadIds: ["cmrwxawgy0006j9kc6szawqx3"],
+      },
     });
     const data = new FormData();
     data.set("conversationId", canonical.id);
@@ -235,6 +255,10 @@ describe("Inbox server action contracts", () => {
       success: true,
       changed: true,
       message: "Suggestion dismissed. Other possible matches remain.",
+      conversation: {
+        ...canonicalMatch,
+        matchCandidateLeadIds: ["cmrwxawgy0006j9kc6szawqx3"],
+      },
     });
 
     vi.clearAllMocks();
@@ -270,5 +294,85 @@ describe("Inbox server action contracts", () => {
       success: false,
       message: "That suggestion could not be dismissed.",
     });
+  });
+
+  it("owner-scopes manual-detach recovery and returns canonical suggestions", async () => {
+    matching.allowConversationMatchingAgain.mockResolvedValue({
+      suppressionCleared: true,
+      alreadyAttached: false,
+      changed: true,
+      attached: false,
+      matched: false,
+      needsReview: true,
+      match: {
+        kind: "AMBIGUOUS",
+        automaticMatch: null,
+        possibleMatches: [{ leadId }],
+        noMatch: null,
+        reason: "Multiple leads share this email",
+        evidenceFingerprint: "evidence-a",
+      },
+      conversation: {
+        ...canonicalMatch,
+        matchCandidateLeadIds: [leadId],
+      },
+    });
+    const data = new FormData();
+    data.set("conversationId", canonical.id);
+
+    const result = await allowConversationMatchingAgainAction(
+      { success: false, message: "" },
+      data,
+    );
+
+    expect(matching.allowConversationMatchingAgain).toHaveBeenCalledWith(
+      "owner-a",
+      canonical.id,
+    );
+    expect(cache.revalidatePath).toHaveBeenCalledWith("/inbox");
+    expect(result).toEqual({
+      success: true,
+      changed: true,
+      message: "Automatic matching resumed. 1 possible match found.",
+      conversation: {
+        ...canonicalMatch,
+        matchCandidateLeadIds: [leadId],
+      },
+    });
+  });
+
+  it("treats an already attached recovery request as an idempotent no-op", async () => {
+    matching.allowConversationMatchingAgain.mockResolvedValue({
+      suppressionCleared: false,
+      alreadyAttached: true,
+      changed: false,
+      attached: false,
+      matched: true,
+      needsReview: false,
+      match: null,
+      conversation: {
+        ...canonicalMatch,
+        leadId,
+        manuallyDetached: false,
+        reviewState: "MATCHED",
+        matchKind: "MATCHED",
+        matchReason: "manually attached",
+        matchCandidateLeadIds: [],
+      },
+    });
+    const data = new FormData();
+    data.set("conversationId", canonical.id);
+
+    const result = await allowConversationMatchingAgainAction(
+      { success: false, message: "" },
+      data,
+    );
+
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      changed: false,
+      message: "Conversation is already attached.",
+    }));
+    expect(cache.revalidatePath).toHaveBeenCalledWith(`/leads/${leadId}`);
   });
 });

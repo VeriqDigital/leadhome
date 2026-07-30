@@ -236,13 +236,13 @@ Vercel 24.x, and removed the polling worker's accumulated abort listeners.
 
 ## Verification
 
-Final verification passed on Node 24.18.0:
+Final verification, including the manual-detach recovery and canonical
+presentation stabilization, passed on Node 24.18.0:
 
-- 14 focused files / 114 tests passed across matching/schema, Gmail
-  normalization/import, Inbox actions/UI/queries, conversation
-  attachment/detachment, lead deletion, website ingestion, activity, and the
-  Gmail job handler;
-- the full suite passed 78 files / 428 tests, with only the explicitly gated
+- the stabilization set passed 8 focused files / 80 tests across matching,
+  recovery, canonical presentation, Inbox actions/UI, manual detach, Gmail
+  normalization/import, and the Gmail job handler;
+- the full suite passed 79 files / 441 tests, with only the explicitly gated
   OpenAI smoke test skipped;
 - Prisma format, validate, and normal client generation passed;
 - migration `20260729192000_add_smart_lead_match_dismissals` deployed

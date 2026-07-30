@@ -272,7 +272,10 @@ conversations, review full stored threads, classify conversations, change
 review/lifecycle state, attach or detach a lead, create a lead from a
 conversation, and create related tasks. Unattached conversations can show up
 to three deterministic Possible match candidates with reasons, inspect/attach,
-choose-another, dismiss, and explicit per-conversation Recheck controls.
+choose-another, dismiss, and explicit per-conversation **Recheck matches**
+controls. A manually detached conversation keeps its automatic-matching block
+but now exposes an owner-scoped **Allow matching again** action that clears only
+that suppression and immediately runs the same bounded matcher.
 
 Imports are normalized behind a provider interface, preserve user-owned
 conversation fields, deduplicate accounts/conversations/messages, maintain
@@ -288,6 +291,12 @@ events. LeadHome does not send mail or modify Gmail.
 Matching ignores outbound identities and the exact connected mailbox address,
 not every address sharing its domain. This preserves customers on public/shared
 domains while preventing the owner's mailbox from becoming a candidate.
+Conversation summary text, the suggestion panel, and the selected Inbox row
+badge use one server-side match presentation. Matching mutations return
+canonical persisted match fields and refresh the server view, preventing stale
+no-match text from contradicting current candidates. Recovery, repeated
+**Recheck matches** requests, and dismissal remain idempotent and do not create
+activity unless a real automatic attachment occurs.
 
 Mailbox authorization is separate from account login. Gmail uses
 `/api/gmail/connect` and `/api/gmail/callback`; Auth.js Google sign-in uses
@@ -393,7 +402,7 @@ Connect/Reconnect flow.
 - **Review a possible match:** Load only owned candidates; present stable
   body-free reasons; explicitly attach through the existing service, choose
   another owned lead, or persist an owner-composite dismissal for the current
-  evidence fingerprint. Recheck is an authenticated action that loads one
+  evidence fingerprint. **Recheck matches** is an authenticated action that loads one
   owned conversation and at most 100 identity-only inbound messages before
   applying the same matcher.
 - **Run AI analysis:** Check owner, preference, conversation eligibility,
@@ -441,7 +450,8 @@ Server actions cover authentication, lead CRUD, pipeline movement, Inbox
 controls, conversation attachment/detachment and lead creation, Gmail
 enqueue/disconnect, task lifecycle, website source management, Conversation
 Intelligence preference, analysis enqueue/reanalysis, and owner-scoped
-possible-match confirmation, dismissal, and single-conversation Recheck.
+possible-match confirmation, dismissal, and single-conversation
+**Recheck matches**.
 
 The common mutation pattern is: authenticate, parse with Zod or a bounded
 typed parser, perform owner-scoped domain work (usually in a Prisma
@@ -598,10 +608,11 @@ and matches Vercel's configured 24.x runtime. The worker regression also
 verified zero retained abort listeners after each of 12 polling delays.
 
 The prior Unified Activity Timeline and production-job infrastructure checks
-passed under Node 24.18.0. Smart Lead Matching final verification also passed:
-14 focused files / 114 tests, then 78 full-suite files / 428 tests with only
-the opt-in OpenAI smoke test skipped. Prisma format, validate, and normal
-client generation passed. Migration
+passed under Node 24.18.0. Smart Lead Matching and its manual-detach recovery
+stabilization also passed: the stabilization set covered 8 focused files / 80
+tests, followed by 79 full-suite files / 441 tests with only the opt-in OpenAI
+smoke test skipped. Prisma format, validate, and normal client generation
+passed. Migration
 `20260729192000_add_smart_lead_match_dismissals` deployed successfully, and
 Prisma reports all 18 migrations applied. TypeScript, ESLint, the Node 24
 production build, and `git diff --check` passed.
@@ -688,7 +699,9 @@ workflows expected for broader self-service use.
   confirmation.
 - Cache the latest bounded result on `Conversation`, use evidence-fingerprinted
   dismissal rows for candidate suppression, and preserve manual detach as the
-  stronger conversation-wide override.
+  stronger conversation-wide override. Clear that override only through the
+  explicit owner-scoped recovery action, which immediately reuses the central
+  matcher and cannot overwrite a newer attachment.
 - Use monotonic timestamps and database uniqueness for retry-safe ingestion.
 - Record meaningful business activity through `lib/activity-service.ts`;
   avoid direct duplicate event-building paths and low-level sync noise.
