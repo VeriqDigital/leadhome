@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   accountFind: vi.fn(),
@@ -232,6 +233,17 @@ describe("conversation service", () => {
       where: { id: leadId, userId: ownerId },
       select: { id: true },
     });
+    expect(mocks.conversationUpdate).toHaveBeenCalledWith({
+      where: { id: conversationId },
+      data: {
+        leadId,
+        manuallyDetached: false,
+        reviewState: "MATCHED",
+        matchKind: "MATCHED",
+        matchReason: "manually attached",
+        matchCandidateLeadIds: Prisma.JsonNull,
+      },
+    });
     expect(mocks.activityCreateMany).toHaveBeenCalledWith({
       data: [
         expect.objectContaining({
@@ -272,6 +284,9 @@ describe("conversation service", () => {
         leadId: null,
         manuallyDetached: true,
         reviewState: "RESOLVED",
+        matchKind: "NO_MATCH",
+        matchReason: "conversation was manually detached",
+        matchCandidateLeadIds: Prisma.JsonNull,
       }),
     });
     expect(mocks.activityCreateMany).toHaveBeenCalledWith({

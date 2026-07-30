@@ -38,8 +38,16 @@ const DEFAULT_MAX_THREADS = boundedGmailThreadLimit(
 );
 const header = (message: gmail_v1.Schema$Message, name: string) =>
   message.payload?.headers?.find((item) => item.name?.toLowerCase() === name.toLowerCase())?.value ?? null;
-const addresses = (value: string | null) =>
-  value?.split(",").map((item) => (item.match(/<([^>]+)>/)?.[1] ?? item).trim().toLowerCase()).filter(Boolean) ?? [];
+const displayAddress = (value: string | null) =>
+  value?.replace(/[\r\n]+/g, " ").trim() || null;
+const addresses = (value: string | null) => {
+  if (!value) return [];
+  const bracketed = [...value.matchAll(/<\s*([^<>]+?)\s*>/g)]
+    .map((match) => match[1]);
+  return (bracketed.length ? bracketed : value.split(","))
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+};
 const decode = (value?: string | null) => {
   if (!value) return null;
   try { return Buffer.from(value, "base64url").toString("utf8"); } catch { return null; }
@@ -103,8 +111,8 @@ export class GmailProvider implements MessageProvider {
     );
     return (response.data.messages ?? []).flatMap((message) => {
       if (!message.id) return [];
-      const from = header(message, "From") ?? "";
-      const sender = addresses(from)[0] ?? from;
+      const from = displayAddress(header(message, "From")) ?? "";
+      const senderAddress = addresses(from)[0] ?? from.toLowerCase();
       const to = addresses(header(message, "To"));
       const cc = addresses(header(message, "Cc"));
       const bcc = addresses(header(message, "Bcc"));
@@ -113,9 +121,9 @@ export class GmailProvider implements MessageProvider {
       if (Number.isNaN(occurredAt.getTime())) return [];
       return [{
         providerMessageId: message.id,
-        direction: sender === account.address?.toLowerCase() ? "OUTBOUND" as const : "INBOUND" as const,
-        sender, recipients: [...new Set([...to, ...cc, ...bcc])],
-        replyTo: addresses(header(message, "Reply-To"))[0] ?? null,
+        direction: senderAddress === account.address?.toLowerCase() ? "OUTBOUND" as const : "INBOUND" as const,
+        sender: from, recipients: [...new Set([...to, ...cc, ...bcc])],
+        replyTo: displayAddress(header(message, "Reply-To")),
         subject: header(message, "Subject"),
         bodyText: content.text.join("\n").trim() || null,
         bodyHtml: content.html.join("\n").trim() || null,

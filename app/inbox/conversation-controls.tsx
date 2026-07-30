@@ -67,6 +67,7 @@ export function ConversationControls({
       <label>
         <span className="sr-only">Attached lead</span>
         <select
+          id="attached-lead-control"
           aria-label="Attached lead"
           name="leadId"
           value={selectedLeadId}

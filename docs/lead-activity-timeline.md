@@ -71,9 +71,12 @@ timestamp.
   inbound or outbound events when the conversation is attached to a lead,
   using the provider message timestamp.
 - Manual attach and detach operations record user/Inbox events. A deterministic
-  Gmail auto-match records a system/Gmail link event. Meaningful conversation
-  status changes are recorded for both linked and unattached conversations;
-  only linked events appear in a lead timeline.
+  Gmail auto-match records a system/Gmail link event, and a user-approved Smart
+  Lead Matching suggestion uses the same owner-scoped manual attachment
+  service. Candidate calculation, display, ranking, dismissal, and
+  single-conversation reevaluation do not create activity. Meaningful
+  conversation status changes are recorded for both linked and unattached
+  conversations; only linked events appear in a lead timeline.
 - Task creation, meaningful edits, completion, reopening, cancellation, and
   deletion record task events, including for standalone and conversation-only
   tasks. Follow-up summary changes are recorded separately by the

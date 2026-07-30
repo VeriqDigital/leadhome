@@ -2,6 +2,7 @@ import "server-only";
 
 import type {
   ConversationClassification,
+  ConversationMatchKind,
   ConversationReviewState,
   ConversationStatus,
   MessageProvider,
@@ -28,6 +29,7 @@ export type ConversationSummaryDto = {
   status: ConversationStatus;
   classification: ConversationClassification;
   reviewState: ConversationReviewState;
+  matchKind: ConversationMatchKind | null;
   lead: { id: string; name: string; email: string | null } | null;
   lastMessageAt: Date | null;
   latestMessage: {
@@ -80,7 +82,8 @@ export async function listConversationSummaries(ownerId: string, filters: InboxF
     take: INBOX_PAGE_SIZE + 1,
     select: {
       id: true, provider: true, subject: true, status: true,
-      classification: true, reviewState: true, lastMessageAt: true,
+      classification: true, reviewState: true, matchKind: true,
+      lastMessageAt: true,
       lead: { select: { id: true, name: true, email: true } },
       messages: {
         orderBy: [{ receivedAt: "desc" }, { id: "desc" }],

@@ -36,10 +36,12 @@ expects Auth.js's own PKCE verifier cookie. Gmail mailbox authorization uses
 its separate, state-validated callback and token store.
 
 Connect and reconnect controls deliberately use a full browser navigation
-rather than a Next.js `Link`. This prevents production Link prefetch from
-starting OAuth during rendering. The control and the server route both reject
-rapid duplicate initiation; safe logs record only the event, request
-host/path, and accepted/duplicate booleans.
+rather than a Next.js `Link` or a hydration-dependent click handler. They are
+ordinary server-rendered anchors to `/api/gmail/connect` and
+`/api/gmail/connect?reconnect=1`, so authorization works without client
+JavaScript and rendering cannot start OAuth through Link prefetch. Server-side
+duplicate protection remains the durable guard. Safe logs record only the
+event, request host/path, and accepted/duplicate booleans.
 
 Google may omit a refresh token on repeat authorization. LeadHome preserves an
 existing encrypted refresh token. Use **Reconnect**, which requests consent
@@ -63,3 +65,9 @@ timestamp. Automatic lead attachment is recorded separately. Run
 The OAuth consent screen and sensitive/restricted-scope verification process
 must be reviewed with Google before public release. This repository does not
 claim that production verification is complete.
+
+The production integration itself has been smoke-tested end to end: the custom
+Gmail callback persisted the mailbox grant, a Gmail sync job was queued and
+manually drained through Vercel Cron, and the imported conversations/messages
+appeared in the production Inbox. This does not replace Google's public-app
+consent and scope-verification requirements.

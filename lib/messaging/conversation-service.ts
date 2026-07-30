@@ -1,10 +1,10 @@
 import "server-only";
 
-import type {
-  ConversationStatus,
-  MessageDirection,
-  MessageProvider,
+import {
   Prisma,
+  type ConversationStatus,
+  type MessageDirection,
+  type MessageProvider,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
@@ -141,6 +141,7 @@ export async function attachConversationToLead({
         reviewState: "MATCHED",
         matchKind: "MATCHED",
         matchReason: "manually attached",
+        matchCandidateLeadIds: Prisma.JsonNull,
       },
     });
     await recordActivity(tx, {
@@ -188,6 +189,7 @@ export async function detachConversation({
         reviewState: "RESOLVED",
         matchKind: "NO_MATCH",
         matchReason: "conversation was manually detached",
+        matchCandidateLeadIds: Prisma.JsonNull,
       },
     });
     await recordActivity(tx, {

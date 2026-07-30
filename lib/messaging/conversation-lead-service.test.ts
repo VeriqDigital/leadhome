@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 
 const state = vi.hoisted(() => ({
   conversation: null as any,
@@ -128,6 +129,7 @@ beforeEach(() => {
     leadId: null,
     subject: null,
     provider: "GMAIL",
+    matchCandidateLeadIds: ["lead-stale"],
     messages: [{
       sender: '"Jane Doe" <jane@example.com>',
       replyTo: null,
@@ -186,6 +188,7 @@ describe("create lead from conversation", () => {
       leadId: result.leadId,
       reviewState: "MATCHED",
       classification: "LEAD",
+      matchCandidateLeadIds: Prisma.JsonNull,
     }));
     expect(state.activities.map((item) => item.type)).toEqual([
       "LEAD_CREATED",

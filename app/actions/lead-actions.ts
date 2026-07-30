@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { Prisma } from "@prisma/client";
 import { buildLeadUpdateActivities } from "@/lib/lead-activities";
 import { requireUser } from "@/lib/auth-user";
 import { prisma } from "@/lib/prisma";
@@ -215,7 +216,27 @@ export async function deleteLeadAction(id: string) {
   const user = await requireUser();
   const parsed = leadIdSchema.safeParse(id);
   if (!parsed.success) return;
-  await prisma.lead.deleteMany({ where: { id, userId: user.id } });
+  await prisma.$transaction(async (tx) => {
+    // Lead deletion uses SET NULL for the relation. Reset the owned
+    // conversation's review metadata first so it cannot be left claiming to
+    // be MATCHED after its attached lead disappears.
+    await tx.conversation.updateMany({
+      where: {
+        ownerId: user.id,
+        leadId: id,
+        lead: { userId: user.id },
+      },
+      data: {
+        leadId: null,
+        reviewState: "NEEDS_REVIEW",
+        manuallyDetached: false,
+        matchKind: "NO_MATCH",
+        matchReason: "attached lead was deleted",
+        matchCandidateLeadIds: Prisma.JsonNull,
+      },
+    });
+    await tx.lead.deleteMany({ where: { id, userId: user.id } });
+  });
   revalidateLead();
   redirect("/leads");
 }

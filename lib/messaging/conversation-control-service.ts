@@ -1,10 +1,10 @@
 import "server-only";
 
-import type {
-  ConversationClassification,
-  ConversationReviewState,
-  ConversationStatus,
+import {
   Prisma,
+  type ConversationClassification,
+  type ConversationReviewState,
+  type ConversationStatus,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import {
@@ -214,11 +214,13 @@ export async function updateConversationControls(input: {
         data.manuallyDetached = false;
         data.matchKind = "MATCHED";
         data.matchReason = "manually attached";
+        data.matchCandidateLeadIds = Prisma.JsonNull;
         if (!reviewChanged) data.reviewState = "MATCHED";
       } else {
         data.manuallyDetached = true;
         data.matchKind = "NO_MATCH";
         data.matchReason = "conversation was manually detached";
+        data.matchCandidateLeadIds = Prisma.JsonNull;
         if (!reviewChanged) data.reviewState = "RESOLVED";
       }
     }

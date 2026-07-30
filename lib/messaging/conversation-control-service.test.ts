@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 
 const state = vi.hoisted(() => ({
   conversations: new Map<string, {
@@ -265,6 +266,17 @@ describe("canonical conversation control mutations", () => {
       where: { id: "lead-b" },
       data: { updatedAt: expect.any(Date) },
     });
+    expect(database.conversation.updateMany).toHaveBeenCalledWith({
+      where: { id: "conversation-b", ownerId: "owner-a" },
+      data: {
+        leadId: "lead-b",
+        manuallyDetached: false,
+        matchKind: "MATCHED",
+        matchReason: "manually attached",
+        matchCandidateLeadIds: Prisma.JsonNull,
+        reviewState: "MATCHED",
+      },
+    });
     expect(state.activityRows).toEqual([
       expect.objectContaining({
         userId: "owner-a",
@@ -318,6 +330,17 @@ describe("canonical conversation control mutations", () => {
     });
 
     expect(state.conversations.get("conversation-b")?.leadId).toBeNull();
+    expect(database.conversation.updateMany).toHaveBeenCalledWith({
+      where: { id: "conversation-b", ownerId: "owner-a" },
+      data: {
+        leadId: null,
+        manuallyDetached: true,
+        matchKind: "NO_MATCH",
+        matchReason: "conversation was manually detached",
+        matchCandidateLeadIds: Prisma.JsonNull,
+        reviewState: "RESOLVED",
+      },
+    });
     expect(analysis.enqueue).not.toHaveBeenCalled();
   });
 });

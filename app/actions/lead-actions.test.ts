@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 
 const mocks = vi.hoisted(() => ({
   transaction: vi.fn(),
@@ -9,6 +10,17 @@ const mocks = vi.hoisted(() => ({
   updateLeads: vi.fn(),
   createActivities: vi.fn(),
   deleteLeads: vi.fn(),
+  updateConversations: vi.fn(),
+  conversations: [] as Array<{
+    id: string;
+    ownerId: string;
+    leadId: string | null;
+    reviewState: string;
+    manuallyDetached: boolean;
+    matchKind: string;
+    matchReason: string;
+    matchCandidateLeadIds: string[] | typeof Prisma.JsonNull;
+  }>,
   currentLead: null as null | {
     [key: string]: unknown;
     id: string;
@@ -92,6 +104,38 @@ const canonical = {
 
 beforeEach(() => {
   mocks.currentLead = { ...existing };
+  mocks.conversations = [
+    {
+      id: "conversation-owned",
+      ownerId: "user-a",
+      leadId,
+      reviewState: "MATCHED",
+      manuallyDetached: false,
+      matchKind: "MATCHED",
+      matchReason: "manually attached",
+      matchCandidateLeadIds: ["lead-stale"],
+    },
+    {
+      id: "conversation-foreign",
+      ownerId: "user-b",
+      leadId,
+      reviewState: "MATCHED",
+      manuallyDetached: false,
+      matchKind: "MATCHED",
+      matchReason: "manually attached",
+      matchCandidateLeadIds: ["lead-foreign-candidate"],
+    },
+    {
+      id: "conversation-other-lead",
+      ownerId: "user-a",
+      leadId: "cm123456789012345678901235",
+      reviewState: "MATCHED",
+      manuallyDetached: false,
+      matchKind: "MATCHED",
+      matchReason: "manually attached",
+      matchCandidateLeadIds: ["lead-other-candidate"],
+    },
+  ];
   mocks.createLead.mockResolvedValue({ id: leadId });
   mocks.findLead.mockImplementation(({ where }) =>
     Promise.resolve(
@@ -134,10 +178,28 @@ beforeEach(() => {
   });
   mocks.createActivities.mockResolvedValue({ count: 1 });
   mocks.deleteLeads.mockResolvedValue({ count: 1 });
+  mocks.updateConversations.mockImplementation(({ where, data }) => {
+    let count = 0;
+    mocks.conversations = mocks.conversations.map((conversation) => {
+      if (
+        conversation.ownerId !== where.ownerId ||
+        conversation.leadId !== where.leadId
+      ) {
+        return conversation;
+      }
+      count++;
+      return { ...conversation, ...data };
+    });
+    return Promise.resolve({ count });
+  });
   mocks.transaction.mockImplementation((operation) =>
     operation({
+      conversation: {
+        updateMany: mocks.updateConversations,
+      },
       lead: {
         create: mocks.createLead,
+        deleteMany: mocks.deleteLeads,
         findFirst: mocks.findLead,
         findMany: mocks.findLeads,
         update: mocks.updateLead,
@@ -344,10 +406,58 @@ describe("lead action activity transactions", () => {
     expect(mocks.createActivities).toHaveBeenCalled();
   });
 
-  it("deletes only the owned lead", async () => {
+  it("deletes only the owned lead and safely resets its attached conversations", async () => {
     await expect(deleteLeadAction(leadId)).rejects.toThrow("NEXT_REDIRECT");
+    expect(mocks.updateConversations).toHaveBeenCalledWith({
+      where: {
+        ownerId: "user-a",
+        leadId,
+        lead: { userId: "user-a" },
+      },
+      data: {
+        leadId: null,
+        reviewState: "NEEDS_REVIEW",
+        manuallyDetached: false,
+        matchKind: "NO_MATCH",
+        matchReason: "attached lead was deleted",
+        matchCandidateLeadIds: Prisma.JsonNull,
+      },
+    });
     expect(mocks.deleteLeads).toHaveBeenCalledWith({
       where: { id: leadId, userId: "user-a" },
+    });
+    expect(mocks.updateConversations.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.deleteLeads.mock.invocationCallOrder[0],
+    );
+    expect(mocks.conversations).toContainEqual({
+      id: "conversation-owned",
+      ownerId: "user-a",
+      leadId: null,
+      reviewState: "NEEDS_REVIEW",
+      manuallyDetached: false,
+      matchKind: "NO_MATCH",
+      matchReason: "attached lead was deleted",
+      matchCandidateLeadIds: Prisma.JsonNull,
+    });
+    expect(mocks.conversations).toContainEqual({
+      id: "conversation-foreign",
+      ownerId: "user-b",
+      leadId,
+      reviewState: "MATCHED",
+      manuallyDetached: false,
+      matchKind: "MATCHED",
+      matchReason: "manually attached",
+      matchCandidateLeadIds: ["lead-foreign-candidate"],
+    });
+    expect(mocks.conversations).toContainEqual({
+      id: "conversation-other-lead",
+      ownerId: "user-a",
+      leadId: "cm123456789012345678901235",
+      reviewState: "MATCHED",
+      manuallyDetached: false,
+      matchKind: "MATCHED",
+      matchReason: "manually attached",
+      matchCandidateLeadIds: ["lead-other-candidate"],
     });
   });
 });

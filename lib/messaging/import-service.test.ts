@@ -5,6 +5,7 @@ import type {
   NormalizedConversation,
   NormalizedMessage,
 } from "./provider";
+import type { LeadMatchResult } from "./matching-service";
 
 const state = vi.hoisted(() => ({
   account: null as null | Record<string, any>,
@@ -15,6 +16,48 @@ const state = vi.hoisted(() => ({
 }));
 
 const matchMock = vi.hoisted(() => vi.fn());
+const enqueueAnalysisMock = vi.hoisted(() => vi.fn());
+
+function noMatchResult(): LeadMatchResult {
+  return {
+    kind: "NO_MATCH",
+    automaticMatch: null,
+    possibleMatches: [],
+    noMatch: {
+      code: "NO_CREDIBLE_MATCH",
+      reason: "No external participant matched",
+    },
+    reason: "No external participant matched",
+    evidenceFingerprint: "no-match-evidence",
+  };
+}
+
+function matchedResult(leadId: string): LeadMatchResult {
+  return {
+    kind: "MATCHED",
+    automaticMatch: {
+      leadId,
+      name: "Matched lead",
+      email: "person@example.com",
+      company: null,
+      confidence: "HIGH",
+      reasonCodes: ["EXACT_SENDER_EMAIL"],
+      reasons: ["Exact sender email"],
+      matchedEvidence: ["EMAIL"],
+      rankingInputs: {
+        deterministicEvidence: 1,
+        exactName: 0,
+        normalizedName: "matched lead",
+        stableId: leadId,
+      },
+      evidenceFingerprint: `match-${leadId}`,
+    },
+    possibleMatches: [],
+    noMatch: null,
+    reason: "Exact sender email",
+    evidenceFingerprint: `conversation-${leadId}`,
+  };
+}
 
 function conversationKey(accountId: string, providerConversationId: string) {
   return `${accountId}:${providerConversationId}`;
@@ -175,6 +218,10 @@ const database = {
     }),
   },
   lead: {
+    findFirst: vi.fn(async ({ where }: any) =>
+      where.userId === "owner-a" && where.id
+        ? { id: where.id }
+        : null),
     findMany: vi.fn(async ({ where }: any) =>
       where.userId === "owner-a"
         ? where.id.in.map((id: string) => ({ id }))
@@ -193,6 +240,9 @@ vi.doMock("@/lib/prisma", () => ({
     $transaction: (operation: (tx: typeof database) => unknown) =>
       operation(database),
   },
+}));
+vi.mock("@/lib/ai/conversation-analysis/job-service", () => ({
+  enqueueConversationAnalysisAfterLeadLink: enqueueAnalysisMock,
 }));
 vi.mock("./matching-service", async () => {
   const actual = await vi.importActual<typeof import("./matching-service")>(
@@ -264,10 +314,8 @@ beforeEach(() => {
   state.activities.length = 0;
   state.sequence = 0;
   vi.clearAllMocks();
-  matchMock.mockResolvedValue({
-    kind: "NO_MATCH",
-    reason: "no external participant matched",
-  });
+  matchMock.mockResolvedValue(noMatchResult());
+  enqueueAnalysisMock.mockResolvedValue(undefined);
 });
 
 describe("provider import pipeline", () => {
@@ -303,10 +351,11 @@ describe("provider import pipeline", () => {
     });
   });
 
-  it("creates an account, conversation, messages, and an accurate summary", async () => {
+  it("creates an account, conversation, and messages even without a lead match", async () => {
+    const provider = new MutableProvider();
     const summary = await importProviderAccount({
       ownerId: "owner-a",
-      provider: new MutableProvider(),
+      provider,
     });
     expect(summary).toEqual({
       accountsProcessed: 1,
@@ -320,6 +369,20 @@ describe("provider import pipeline", () => {
     expect(state.account).toEqual(expect.objectContaining({ ownerId: "owner-a" }));
     expect(state.messages).toHaveLength(2);
     const conversation = [...state.conversations.values()][0];
+    expect(matchMock).toHaveBeenCalledWith({
+      ownerId: "owner-a",
+      conversation: expect.objectContaining({
+        id: conversation.id,
+        leadId: null,
+      }),
+      messages: provider.messages.get("thread-a"),
+      accountAddress: "inbox@example.com",
+    });
+    expect(conversation).toEqual(expect.objectContaining({
+      leadId: null,
+      matchKind: "NO_MATCH",
+      matchReason: "No external participant matched",
+    }));
     expect(state.activities).toContainEqual(
       expect.objectContaining({
         userId: "owner-a",
@@ -482,12 +545,7 @@ describe("provider import pipeline", () => {
       manuallyDetached: true,
       reviewState: "RESOLVED",
     });
-    matchMock.mockResolvedValue({
-      kind: "MATCHED",
-      leadId: "lead-auto",
-      confidence: "HIGH",
-      reason: "exact sender email matched one lead",
-    });
+    matchMock.mockResolvedValue(matchedResult("lead-auto"));
     await importProviderAccount({ ownerId: "owner-a", provider });
     expect(state.conversations.get(entry[0])).toEqual(expect.objectContaining({
       leadId: null,
@@ -498,15 +556,15 @@ describe("provider import pipeline", () => {
 
   it("auto-attaches once and follows the silent-baseline activity policy", async () => {
     const provider = new MutableProvider();
-    matchMock.mockResolvedValue({
-      kind: "MATCHED",
-      leadId: "lead-a",
-      confidence: "HIGH",
-      reason: "exact sender email matched one lead",
-    });
-    await importProviderAccount({ ownerId: "owner-a", provider });
+    matchMock.mockResolvedValue(matchedResult("lead-a"));
+    const initial = await importProviderAccount({ ownerId: "owner-a", provider });
     await importProviderAccount({ ownerId: "owner-a", provider });
 
+    expect(initial).toEqual(expect.objectContaining({
+      conversationsMatched: 1,
+      conversationsNeedingReview: 0,
+    }));
+    expect(enqueueAnalysisMock).toHaveBeenCalledOnce();
     expect(
       state.activities.filter((activity) => activity.type === "CONVERSATION_LINKED"),
     ).toHaveLength(1);
@@ -519,7 +577,7 @@ describe("provider import pipeline", () => {
         userId: "owner-a",
         leadId: "lead-a",
         actorType: "SYSTEM",
-        source: "GMAIL",
+        source: "INBOX",
         title: "Conversation attached",
         idempotencyKey: expect.stringMatching(
           /^conversation-auto-link:conversation-\d+:lead-a$/,

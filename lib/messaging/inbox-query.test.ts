@@ -13,7 +13,8 @@ vi.mock("@/lib/prisma", () => ({ prisma: database }));
 
 const row = (id: string, date: Date | null, messageDate = date ?? new Date()) => ({
   id, provider: "GMAIL", subject: `Subject ${id}`, status: "OPEN",
-  classification: "UNKNOWN", reviewState: "NEEDS_REVIEW", lastMessageAt: date,
+  classification: "UNKNOWN", reviewState: "NEEDS_REVIEW", matchKind: null,
+  lastMessageAt: date,
   lead: null,
   messages: [{ sender: "sender@example.com", bodyText: "A full body that becomes a bounded preview", direction: "INBOUND", receivedAt: messageDate }],
 });
@@ -27,9 +28,24 @@ describe("inbox queries", () => {
     const query = database.conversation.findMany.mock.calls[0][0];
     expect(query.where.ownerId).toBe("owner-a");
     expect(query.take).toBe(INBOX_PAGE_SIZE + 1);
+    expect(query.select.matchKind).toBe(true);
     expect(query.select.messages.take).toBe(1);
     expect(query.select.messages.select).not.toHaveProperty("bodyHtml");
     expect(result.items[0]).not.toHaveProperty("messages");
+  });
+
+  it("returns cached possible-match state for the bounded Inbox row badge", async () => {
+    database.conversation.findMany.mockResolvedValue([
+      { ...row("possible", new Date()), matchKind: "AMBIGUOUS" },
+    ]);
+
+    const result = await listConversationSummaries("owner-a", { page: 1 });
+
+    expect(result.items[0]).toEqual(expect.objectContaining({
+      id: "possible",
+      matchKind: "AMBIGUOUS",
+      lead: null,
+    }));
   });
 
   it("uses stable newest-first ordering and detects the next page without returning the lookahead", async () => {

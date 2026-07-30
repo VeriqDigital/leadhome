@@ -2,354 +2,31 @@
 
 ## Current Milestone
 
-Unified Activity Timeline was implemented by extending LeadHome's existing
-activity history. The iteration centralizes activity recording, integrates the
-major lead, website, conversation, Gmail, task, pipeline, and AI completion
-workflows, upgrades the lead timeline, and adds a compact Dashboard Recent
-Activity list. A follow-up stabilization pass then fixed controlled lead-form
-state and persisted task rendering without starting another roadmap milestone.
-That stabilization work also isolated and disabled a Next.js development-only
-reload fallback, split the timeline into server-rendered content plus a small
-pagination island, aligned the runtime with Vercel, and retained the worker
-listener cleanup.
+Smart Lead Matching is the active Phase 2 milestone. It extends the existing
+conservative exact-email matcher into one explainable automatic/suggested
+matching workflow without adding a competing matcher, matching queue, activity
+table, or AI dependency.
 
-Production job draining was subsequently configured as infrastructure for the
-existing queue, not as a new product milestone. Vercel Cron now invokes the
-same bounded runner used by the local worker.
+The implementation is intentionally incremental:
+
+- one unique exact normalized participant email may attach automatically;
+- credible but ambiguous evidence is shown for review;
+- weak, fuzzy, body-derived, company-inferred, or AI evidence never attaches a
+  lead;
+- manual decisions always override automation.
 
 ## Milestone Status
 
-Complete
+**Complete.**
 
-The implementation, additive migration, focused regressions, full test suite,
-TypeScript, lint, and production build have all been verified. The configured
-database reports all 17 repository migrations applied.
-
-## Features Completed
-
-- [x] Unified Activity Timeline
-- [ ] Smart Lead Matching
-- [ ] Automatic Company Detection
-- [ ] Contact Extraction
-- [ ] Inbox Prioritization
-- [ ] Dashboard Needs Attention
-- [ ] AI Buying Signal Detection
-- [ ] Follow-up Detection
-- [ ] Notification Center
-- [ ] Automation Rules Engine
-
-## What Changed
-
-- Lead detail pages now present business events as a date-grouped timeline with
-  event icons, useful context, exact and relative times, related-record links,
-  and missing-record fallbacks.
-- Long timelines use a bounded Load older activity flow with loading, retry,
-  and empty states rather than loading unlimited history.
-- The Dashboard retains its existing cards and adds an owner-scoped Recent
-  Activity list for selected high-value event types.
-- Core mutations and import/background workflows now use a shared recorder
-  instead of constructing activity rows independently.
-- Business occurrence time is distinct from insertion time, so provider
-  messages and completed AI work appear where they happened.
-- Lead-page follow-up creation now shows the recalculated lead date, new task,
-  and activities from the same refreshed server result without leaving the
-  page.
-- Persisted follow-ups render directly from the latest read-only server prop
-  while unsaved editable lead fields remain local, so ordinary lead-page
-  renders perform no refresh, navigation, state-reconciliation effect, or
-  write.
-- The initial activity page and its formatted rows are server-rendered from a
-  primitive presentation DTO. Only the Load older control and appended pages
-  are a Client Component; the final design does not use `ssr: false`.
-- A Firefox document-reload storm was traced to Next.js 16.2.11's optional
-  development React debug channel, not persisted activity or follow-up data.
-  The channel is disabled explicitly in `next.config.ts`.
-
-## Architectural Changes
-
-- Reused and extended `LeadActivity` so the product has one history rather than
-  two competing event systems.
-- Added `lib/activity-service.ts` as a server-only recording and query boundary.
-  It validates owner-scoped relationships and accepts an existing transaction
-  so an activity normally commits atomically with its business mutation.
-- Added typed actor and source enums and continued using the existing typed
-  activity enum instead of accepting arbitrary strings.
-- Added deterministic idempotency keys and database uniqueness constraints for
-  work that can be retried, imported twice, or run concurrently.
-- Added `occurredAt` for business chronology while retaining `createdAt` as the
-  database insertion time.
-- Added cursor pagination ordered by `occurredAt DESC, id DESC`; the ID is the
-  deterministic equal-time tie-breaker.
-- Kept Dashboard prioritization as a small allowlist query so a future
-  attention-scoring system can evolve separately.
-- Kept `Task` as the sole follow-up source of truth. The lead form ignores its
-  read-only follow-up field on writes and derives only that rendered value
-  from the revalidated server prop.
-- Moved timeline presentation into a server-only formatter. Initial rows cross
-  no Client Component boundary; the pagination island receives only strings,
-  string arrays, and nullable cursor/day values.
-- Disabled `experimental.reactDebugChannel` for development. In Firefox,
-  Next.js treated a navigation entry with `transferSize === 0` and a missing
-  request storage key as a cache restore and called `location.reload()`.
-  Chrome did not reproduce the loop, Webpack development still produced extra
-  reloads, and the production client did not contain this debug channel.
-- Pinned local Node to `24.18.0` and the package engine to `24.x`, matching the
-  linked Vercel project's `24.x` runtime. Node 24.18 includes the upstream
-  TransformStream cancellation-race fix; Node 26.5 remains a verified
-  comparison runtime rather than the deployment requirement.
-- Added a production-only, timing-safe `GET /api/cron/jobs` trigger and a
-  once-per-minute UTC `vercel.json` schedule. The route reuses the existing
-  database-leased runner with a 10-job limit, sequential execution,
-  240-second budget, and 300-second Node.js Function cap.
-- Preserved `npm run jobs:worker` for continuous local polling (with
-  `jobs:work` retained as an alias) and the separately protected internal
-  route. Both HTTP routes share claim, dispatch, retry, cancellation,
-  progress, cleanup, and idempotency logic.
-
-## Database Changes
-
-Exact migrations:
-
-- `20260727230000_unified_activity_timeline`
-- `20260727231500_correct_unified_activity_provenance`
-
-- Extended `LeadActivity`; no new activity model was created.
-- Made `leadId` optional and added optional `taskId`.
-- Added `LeadActivityActorType` and `LeadActivitySource`.
-- Added `CONVERSATION_IMPORTED`, `CONVERSATION_STATUS_CHANGED`, and
-  `AI_ANALYSIS_COMPLETED` to `LeadActivityType`.
-- Added `actorType`, `source`, `occurredAt`, and optional `idempotencyKey`.
-- Changed lead deletion from cascading activity deletion to `SET NULL`; task,
-  conversation, and message relations also preserve history with `SET NULL`.
-  User deletion still cascades the owner's activities.
-- Added the `(userId, idempotencyKey)` unique constraint and retained the
-  existing `(messageId, type)` duplicate guard.
-- Added timeline and lookup indexes for lead, owner, conversation, task,
-  message, and owner/type queries using `occurredAt`.
-- Preserved existing rows. The migration initializes `occurredAt` from
-  `createdAt`, uses `Message.receivedAt` when a linked message provides a more
-  precise timestamp, and restores owned task links from legacy
-  `metadata.taskId`.
-- Legacy actor and source values are inferred from event type. Exact historical
-  Gmail-message and automatic-link provenance is then corrected where
-  surviving canonical records make it identifiable. Provenance that was never
-  stored or cannot be inferred cannot be reconstructed.
-
-## Workflow Integrations
-
-- Manual lead creation records `LEAD_CREATED`.
-- Lead editing records granular status, value, contact, company, notes, and
-  source changes instead of one vague update. Follow-up changes come only from
-  task recalculation.
-- Pipeline status moves use the same transactional status/activity service.
-- Website form and test-source ingestion record one owner-scoped website
-  submission event; external idempotency keys also protect the activity.
-- First conversation imports record one idempotent conversation event while
-  initial messages remain a silent baseline.
-- Later inbound and outbound messages on attached conversations record
-  body-free events at the provider timestamp.
-- Manual attach/detach, deterministic Gmail auto-link, and meaningful linked
-  or unattached conversation status changes record activities.
-- Task creation, meaningful editing, completion, reopening, cancellation, and
-  deletion record events for lead-linked, conversation-only, and standalone
-  tasks.
-- Follow-up recalculation records a separate system event when the lead summary
-  changes.
-- Successful Conversation Intelligence completion records one idempotent AI
-  event in the same lease-fenced transaction as the canonical analysis.
-- Explicitly saving a task prefilled from an AI suggestion records validated
-  analysis provenance. AI still does not mutate CRM state automatically.
-
-Deferred activity includes classification/review-state changes, AI
-request/failure events, synthesized overdue transitions, and proposal or
-attachment detection. Low-level sync progress and no-op refreshes remain
-operational data, not business activity.
-
-## Files Added
-
-- `lib/activity-service.ts` — centralized recording, validation, timeline
-  pagination, and Dashboard queries.
-- `lib/activity-service.test.ts` — recorder, owner isolation, pagination, and
-  Dashboard query coverage.
-- `app/api/leads/[id]/activities/route.ts` and its test — authenticated,
-  owner-scoped cursor endpoint.
-- `app/recent-activity.tsx` and its test — compact Dashboard activity list.
-- `app/leads/[id]/loading.tsx` and `app/leads/[id]/error.tsx` — polished lead
-  detail loading and error states.
-- `app/leads/[id]/page.test.tsx` — persisted follow-up, repeated-render, task,
-  and activity regression coverage.
-- `app/leads/activity-timeline-pagination.tsx`,
-  `app/leads/activity-timeline-rows.tsx`, and
-  `lib/activity-presentation.ts` — minimal client pagination, reusable static
-  rows, and server-only conversion to primitive display data.
-- `.node-version` — exact local Node 24.18.0 runtime pin.
-- `scripts/lead-detail-browser.mjs` — focused Firefox and Chrome lead-detail
-  acceptance coverage.
-- `app/api/cron/jobs/route.ts` and focused tests — secured Vercel Cron
-  trigger, safe summaries/logging, and production configuration assertions.
-- `lib/jobs/bearer-auth.ts` — timing-safe exact Bearer comparison shared by
-  both machine-authenticated job routes.
-- `vercel.json` — production once-per-minute queue-drain schedule.
-- `prisma/migrations/20260727230000_unified_activity_timeline/migration.sql` —
-  additive schema extension and compatibility backfill.
-- `prisma/migrations/20260727231500_correct_unified_activity_provenance/migration.sql`
-  — additive correction for identifiable legacy Gmail and automatic-link
-  provenance; the already-applied schema migration remains unchanged.
-- `docs/PROJECT_STATE.md` — repository-verified product and architecture
-  baseline for future development.
-- `docs/PHASE2_PROGRESS.md` — this Phase 2 implementation journal.
-
-## Files Modified
-
-- `prisma/schema.prisma` and `prisma/lead-activity-schema.test.ts` — unified
-  activity fields, enums, relations, constraints, indexes, and migration
-  assertions.
-- `app/leads/[id]/page.tsx`, `app/leads/activity-timeline.tsx`, and timeline
-  tests — server-rendered initial presentation, persisted follow-up rendering,
-  primitive display data, and paginated older history.
-- `app/page.tsx` — Dashboard Recent Activity integration.
-- `app/actions/lead-actions.ts`, `lib/lead-activities.ts`, and related tests —
-  centralized granular lead events.
-- `app/actions/task-actions.ts`, `app/tasks/new/page.tsx`,
-  `app/tasks/task-form.tsx`, `lib/tasks/task-service.ts`, and related tests —
-  complete task lifecycle, follow-up, and validated AI-suggestion provenance.
-- `app/leads/lead-form.tsx`, `app/actions/lead-actions.ts`,
-  `app/tasks/task-due.tsx`, and related tests — read-only follow-up prop
-  composition, task-only follow-up ownership, and stable persisted-date
-  rendering without render-time state reconciliation.
-- `app/tasks/task-form.tsx` and its tests — successful creation clears
-  one-off values while preserving the lead-detail form's linked lead and
-  `FOLLOW_UP` type for immediate resubmission.
-- `next.config.ts`, `package.json`, and `package-lock.json` — disable the
-  faulty development debug channel and align the supported Node major with
-  Vercel.
-- `scripts/jobs-worker.mjs` and its tests — remove each polling delay's abort
-  listener when the timer settles or shutdown occurs.
-- `lib/jobs/runner.ts`, the internal job route, `proxy.ts`, `package.json`, and
-  `.env.example` — 240-second-capable bounded passes, abort-aware stop
-  behavior, cron Proxy exclusion, the local command alias, and the documented
-  production secret.
-- `lib/messaging/import-service.ts`, conversation mutation services, and their
-  tests — imported conversation, message, link, unlink, and status events.
-- `app/api/inbound/forms/route.ts`, `lib/inbound-sources.ts`, and tests —
-  transactional website activity and retry idempotency.
-- `lib/jobs/handlers/conversation-analysis.ts` and its tests — lease-fenced AI
-  completion activity.
-- `lib/jobs/handlers/gmail-sync.ts` — Dashboard refresh after completed Gmail
-  work.
-- `lib/pipeline/status-service.ts` and `lib/pipeline/pipeline-query.ts` —
-  centralized status events and occurrence-time activity summaries.
-- `docs/lead-activity-timeline.md` — rewritten for the unified model,
-  compatibility behavior, workflows, API, UI, and Dashboard query.
-- `docs/background-jobs.md`, `docs/conversation-intelligence.md`,
-  `docs/google-gmail-setup.md`, `docs/inbound-forms.md`, `docs/inbox.md`,
-  `docs/messaging-import.md`, `docs/pipeline.md`, and `docs/tasks.md` — narrow
-  corrections for the activity integration and current implemented behavior.
-
-## Testing and Verification
-
-- `npx.cmd prisma format` — Passed; Prisma formatted
-  `prisma/schema.prisma`.
-- `npm.cmd run db:validate` — Passed; the Prisma schema is valid.
-- `npm.cmd run db:generate` — Passed; Prisma Client 6.19.3 generated.
-- `npm.cmd run db:migrate:deploy` — Passed; applied
-  `20260727230000_unified_activity_timeline` and, in a later immutable
-  follow-up, `20260727231500_correct_unified_activity_provenance`.
-- `npx.cmd prisma migrate status` — Passed; 17 migrations found and the
-  configured database schema is up to date.
-- `npx.cmd vitest run prisma/lead-activity-schema.test.ts lib/activity-service.test.ts app/leads/activity-timeline.test.tsx "app/api/leads/[id]/activities/route.test.ts" app/recent-activity.test.tsx app/actions/lead-actions.test.ts lib/tasks/task-service.test.ts lib/messaging/import-service.test.ts lib/messaging/conversation-service.test.ts lib/messaging/conversation-control-service.test.ts lib/messaging/conversation-lead-service.test.ts app/api/inbound/forms/route.test.ts lib/jobs/handlers/conversation-analysis.test.ts lib/pipeline/status-service.test.ts`
-  — Passed; 14 test files and 110 tests passed.
-- `npx.cmd vitest run "app/leads/[id]/page.test.tsx" app/leads/lead-form.test.tsx app/actions/lead-actions.test.ts app/actions/task-actions.test.ts app/tasks/task-form.test.tsx lib/tasks/task-service.test.ts lib/lead-format.test.ts app/leads/activity-timeline.test.tsx`
-  — Passed; 8 test files and 57 tests passed.
-- `npm.cmd run typecheck` — Passed with no TypeScript errors.
-- `npm.cmd run lint` — Passed with no ESLint errors.
-- `npm.cmd test` — Passed; 66 test files and 365 tests passed. One
-  environment-gated OpenAI smoke-test file/test was skipped as designed.
-- `npm.cmd run build` — Passed; Prisma generation and the Next.js 16.2.11
-  production build completed successfully.
-- Focused real-browser verification — Firefox reproduced the development
-  reload fallback before it was disabled; Chrome did not. Firefox development
-  with both Turbopack and Webpack showed extra navigation behavior, while the
-  production client did not contain the debug channel. The final
-  server-rendered timeline and follow-up flow passed Firefox and Chrome
-  acceptance checks.
-- Runtime matrix — the stabilized application and production build were
-  exercised on Node 24.18.0 and Node 26.5.0. Node 24.18.0 is the final local
-  and Vercel-aligned runtime.
-- Worker listener regression — 12 consecutive polling delays each returned
-  the shutdown signal's abort-listener count to zero.
-- Production-job infrastructure focus — cron authorization, safe empty/error
-  summaries, runner batch/time/abort stops, overlapping claim safety,
-  idempotency foundations, local polling, and the exact Vercel schedule are
-  covered without provider calls.
-- Node 24.18 production-infrastructure verification — 7 focused files and 50
-  tests passed; the full suite passed 384 tests in 71 files with the one
-  opt-in live OpenAI smoke test skipped; TypeScript, ESLint, Prisma format,
-  validate, generate, migration status, and the Next.js production build all
-  passed. The build emits `/api/cron/jobs` as a dynamic route.
-- `git diff --check` — Passed with no whitespace errors.
-
-## Known Limitations
-
-- Historical activity actor and source values remain best-effort where the old
-  rows and surviving relations do not identify them. Gmail-message and
-  automatic-link provenance is corrected when it is identifiable.
-- Existing rows get precise business time only when linked message data exists;
-  other legacy events retain their original insertion time.
-- Activity already deleted by the old lead-cascade behavior cannot be
-  recovered, and the migration does not fabricate events for unrecorded past
-  actions.
-- There is no dedicated conversation-wide or task-wide timeline UI yet.
-  Conversation-only and task-only events are retained but appear on a lead
-  timeline only when they also have that lead link.
-- Dashboard Recent Activity is chronological and allowlisted. It is not Inbox
-  prioritization, attention scoring, or a notification center.
-- Derived overdue state does not create a durable event because no reliable
-  transition scheduler exists.
-- Proposal and attachment detection are not supported by current canonical
-  data.
-- Next.js's optional React debug channel remains disabled in development until
-  its cache-restore fallback can distinguish Firefox's zero-transfer
-  navigation entry without forcing a document reload.
-- The once-per-minute Vercel schedule requires Pro or Enterprise; Hobby's
-  once-daily minimum cannot provide acceptable LeadHome queue latency.
-- Cron delivery and function execution are at-least-once. The database lease,
-  stale recovery, and handler idempotency remain mandatory, and production
-  queue-stall alerting is not yet implemented.
-
-## Decisions for Future Milestones
-
-- Continue using `LeadActivity` and `lib/activity-service.ts`; do not add a
-  second event table or bypass relationship validation.
-- Use `occurredAt` for business ordering and `createdAt` for audit insertion
-  time.
-- Record workflow events inside the owning transaction whenever possible.
-- Give imported and background-generated events deterministic, owner-scoped
-  idempotency keys.
-- Keep message bodies, private notes, AI output, credentials, and raw provider
-  payloads out of activity descriptions and metadata.
-- Preserve explicit user confirmation for AI-suggested CRM changes.
-- Add a stable event type only for meaningful business history, not sync or
-  queue noise.
-
-## Next Recommended Milestone
-
-Smart Lead Matching is the highest-impact next milestone. Gmail is already the
-most developed acquisition channel, and the unified activity model now
-provides owner-scoped conversation/lead relationships and an auditable place
-to record a confirmed match. The existing exact-email auto-match should remain
-the conservative automatic path; the next phase can add explainable,
-reviewable suggestions for ambiguous conversations without silently attaching
-fuzzy matches.
-
-Automatic Company Detection and Contact Extraction should remain separate
-follow-on milestones, and the matching phase should not add Outlook, social
-channels, automatic AI CRM edits, or a general rules engine.
+The implementation, additive migration, focused/full tests, Prisma checks,
+TypeScript, ESLint, Node 24 production build, migration status, and
+`git diff --check` all passed on the complete working tree.
 
 ## Phase 2 Roadmap
 
 - [x] Unified Activity Timeline
-- [ ] Smart Lead Matching
+- [x] Smart Lead Matching
 - [ ] Automatic Company Detection
 - [ ] Contact Extraction
 - [ ] Inbox Prioritization
@@ -358,3 +35,244 @@ channels, automatic AI CRM edits, or a general rules engine.
 - [ ] Follow-up Detection
 - [ ] Notification Center
 - [ ] Automation Rules Engine
+
+Automatic Company Detection and Contact Extraction remain separate future
+milestones. Conversation Intelligence may display suggestions, but Smart Lead
+Matching does not apply AI output to lead identity.
+
+## Existing Foundation Reused
+
+Repository inspection found one existing matching boundary in
+`lib/messaging/matching-service.ts`. It already:
+
+- normalizes sender/reply-to email addresses;
+- excludes outbound identities and the exact connected mailbox address;
+- scopes candidate leads to the conversation owner;
+- preserves an existing lead attachment;
+- respects `Conversation.manuallyDetached`;
+- resolves an existing durable website-submission identity;
+- auto-attaches only one exact normalized-email candidate;
+- returns an ambiguous result when multiple leads share the email.
+
+The importer calls that service after committing provider-owned conversation
+and message data, then applies match state and any attachment in a focused
+transaction. This keeps a matching failure from corrupting an otherwise
+successful message import. Existing provider, conversation, and message
+uniqueness remains the import/retry idempotency foundation.
+
+The extended normalizer deliberately stops treating an entire email domain as
+internal. Excluding every same-domain address created false negatives for
+customers on shared public domains; only the exact connected mailbox address
+and outbound identities are ignored.
+
+## Final Matching Architecture
+
+The existing matching service is the central owner-scoped service for both
+Gmail import and Inbox reevaluation. It returns one of three explainable
+outcomes:
+
+1. **Automatic match** — one uniquely identified owned lead.
+2. **Possible match** — one or more bounded candidates requiring confirmation.
+3. **No credible match** — no candidate is attached or implied.
+
+Candidate results contain stable reason codes, body-free human explanations,
+confidence categories, matched evidence, and deterministic ranking inputs.
+The service returns at most three candidates. Equal candidates use a stable
+lead-ID tie-breaker.
+
+### Automatic rules
+
+Automatic attachment requires one owned lead whose normalized email exactly
+equals an external inbound sender/reply-to email. A durable website-submission
+identity can strengthen and rank a suggestion, but it does not attach a lead
+by itself.
+
+Automatic attachment is suppressed when the conversation is already attached
+to another lead, manually detached, no longer eligible for automatic review,
+or the candidate/evidence fingerprint was dismissed. An import retry cannot
+overwrite a user-selected lead or duplicate attachment activity.
+
+### Review-only rules
+
+The following may produce Possible match candidates but never automatic
+attachment:
+
+- multiple owned leads sharing the same exact participant email;
+- an exact durable website-submission identity without a unique exact
+  participant-email match;
+- an exact normalized inbound participant display name matching a lead name.
+
+Smart Lead Matching does not use fuzzy name similarity, company similarity,
+email-domain inference, message-body contact extraction, or AI inference.
+LeadHome has no canonical company-domain identity field, so this milestone does
+not invent one.
+
+## Persistence and Migration
+
+The existing `Conversation.matchKind`, `matchReason`, and
+`matchCandidateLeadIds` fields cache the latest result. They remain review
+state, not a second source of lead identity.
+
+Additive migration `20260729192000_add_smart_lead_match_dismissals` adds
+`ConversationLeadMatchDismissal` with:
+
+- `ownerId`, `conversationId`, and candidate `leadId`;
+- an `evidenceFingerprint`;
+- `dismissedAt`;
+- owner-composite conversation and lead relations;
+- uniqueness across owner, conversation, lead, and evidence fingerprint;
+- owner/conversation and owner/lead lookup indexes.
+
+The migration also adds the `Lead(id, userId)` composite uniqueness needed by
+the owner-composite candidate relation. Owner, conversation, or lead deletion
+cascades the related dismissal rows. Existing conversations and attachments
+are preserved, and no applied migration is rewritten.
+
+When an attached lead is deliberately deleted later, the owner-scoped delete
+action resets its conversations to `NEEDS_REVIEW`/`NO_MATCH` and clears the
+cached candidate list before deleting the lead, so `SET NULL` cannot leave
+stale `MATCHED` review state.
+
+The evidence fingerprint prevents a dismissed candidate from immediately
+reappearing for the same identity evidence. Meaningfully changed evidence can
+produce a new fingerprint and allow reevaluation. Manual detach remains the
+stronger conversation-wide suppression.
+
+## Inbox and Existing Conversations
+
+Unattached conversations with credible candidates show a compact Possible
+match state. Conversation detail presents a bounded ordered list with lead
+name, optional company/email context, confidence, concise reasons, an inspect
+link, explicit Attach action, the existing Choose another lead workflow, and
+Dismiss.
+
+Confirmation and dismissal are authenticated, owner-scoped mutations. A
+client-supplied candidate ID cannot attach or dismiss another owner's lead.
+Pending and error states stay local to the existing Inbox review surface.
+
+Existing conversations use an explicit authenticated **Recheck** action. It
+loads one owned conversation and at most 100 identity-only inbound messages,
+then applies the same central matcher. The detail page may calculate a bounded
+read-only current view, but rendering never persists state. There is no
+unbounded owner scan and no new background job type for matching.
+
+## Import and Activity Behavior
+
+Gmail import continues to:
+
+- normalize through the provider adapter;
+- preserve provider-owned versus user-owned fields;
+- commit one conversation and its returned messages atomically;
+- evaluate matching after message persistence;
+- apply cached match state and any eligible attachment in a focused
+  owner-scoped transaction;
+- preserve message, attachment, and activity idempotency on retry.
+
+Smart Lead Matching continues to use `LeadActivity` and
+`lib/activity-service.ts`. A confirmed automatic attachment records one
+idempotent system/Gmail link event. A user-approved suggestion uses the
+existing manual attachment service and records the existing Inbox link event.
+Candidate calculation, display, ranking changes, Recheck with no relationship
+change, and dismissal do not create activity.
+
+Website ingestion remains unchanged: it creates the canonical lead and durable
+submission identity. The matching service consumes that identity where a
+message already carries it; it does not add a redundant website matching flow.
+
+## Owner Isolation and Safety
+
+- Every candidate query includes the authenticated owner.
+- Conversation, candidate lead, dismissal, confirmation, and Recheck
+  relationships are owner-validated server-side.
+- Dismissal relations use owner-composite foreign keys.
+- Candidate lists and identity-message reads are bounded.
+- Stable reasons never contain message bodies, private notes, provider
+  payloads, tokens, or OAuth data.
+- Manual attachment and detach decisions override automated results.
+- Calculating suggestions cannot mutate another owner's data or reveal that
+  another owner's matching lead exists.
+
+## Production Gmail and Cron Reconciliation
+
+Production infrastructure is now verified independently of this milestone:
+
+- Custom Gmail mailbox authorization starts at `/api/gmail/connect` and
+  returns to `/api/gmail/callback`.
+- Auth.js Google account login/linking returns to
+  `/api/auth/callback/google`; it does not share the Gmail callback.
+- Gmail Connect/Reconnect controls are ordinary server-rendered anchors, not
+  prefetched Next.js links or hydration-dependent buttons.
+- Production Gmail authorization and encrypted token persistence succeeded.
+- A production Gmail sync was queued, invoked with Vercel's Cron dashboard
+  **Run** control, completed, and imported conversations/messages visible in
+  the Inbox.
+- `vercel.json` currently uses the Hobby-compatible `0 10 * * *` schedule:
+  once daily at 10:00 UTC.
+- Once-per-minute automatic draining is a future Vercel Pro configuration, not
+  the current production cadence.
+
+Vercel Cron remains a trigger for the same durable PostgreSQL queue. Execution
+is at-least-once; database claims, leases, retries, stale recovery, and handler
+idempotency remain required. The schedule drains jobs already enqueued by the
+application and does not itself enqueue periodic Gmail syncs.
+
+## Prior Completed Milestone: Unified Activity Timeline
+
+Unified Activity Timeline extended the existing `LeadActivity` model and added
+`lib/activity-service.ts` as the single owner-validating recorder/query
+boundary. Migrations `20260727230000_unified_activity_timeline` and
+`20260727231500_correct_unified_activity_provenance` added typed actor/source,
+business `occurredAt`, owner-scoped idempotency, optional durable relations,
+stable cursor ordering, and best-effort legacy provenance correction without
+fabricating history.
+
+The completed milestone integrated meaningful lead, website, conversation,
+Gmail, task, pipeline, and Conversation Intelligence events; added the
+server-rendered paginated lead timeline and Dashboard Recent Activity; and kept
+low-level sync/no-op state out of business history. Later stabilization fixed
+persisted follow-up rendering, split timeline pagination into a small client
+island, disabled the faulty development React debug channel, aligned Node with
+Vercel 24.x, and removed the polling worker's accumulated abort listeners.
+
+## Verification
+
+Final verification passed on Node 24.18.0:
+
+- 14 focused files / 114 tests passed across matching/schema, Gmail
+  normalization/import, Inbox actions/UI/queries, conversation
+  attachment/detachment, lead deletion, website ingestion, activity, and the
+  Gmail job handler;
+- the full suite passed 78 files / 428 tests, with only the explicitly gated
+  OpenAI smoke test skipped;
+- Prisma format, validate, and normal client generation passed;
+- migration `20260729192000_add_smart_lead_match_dismissals` deployed
+  successfully, and Prisma reports all 18 migrations applied;
+- TypeScript, ESLint, the production Next.js build, and `git diff --check`
+  passed.
+
+Provider regressions used fixtures/mocks; no real mailbox data or provider
+credentials entered automated tests.
+
+## Known Limitations
+
+- Matching is deterministic and intentionally conservative; it is not fuzzy or
+  AI-powered.
+- Name-only evidence requires review and can produce false-positive candidates
+  when contacts share a display name.
+- Candidate results are capped at three, so a heavily duplicated identity may
+  require the existing manual lead chooser.
+- There is no canonical company-domain model, automatic company detection, or
+  contact extraction.
+- Existing conversations are reevaluated one at a time through Recheck; there
+  is no bulk backfill scan or matching job.
+- Gmail remains read-only and has no scheduled periodic enqueue. The current
+  queue drainer runs daily unless an operator uses Vercel's **Run** control.
+- Cron/function execution is at-least-once and production queue-stall alerting
+  is not implemented.
+
+## Next Recommended Milestone
+
+After Smart Lead Matching passes final verification, Automatic Company
+Detection is the next roadmap item. It should remain a reviewed, explainable
+workflow and must not weaken the unique-identity boundary used for automatic
+lead attachment. Contact Extraction should remain a separate later milestone.

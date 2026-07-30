@@ -1,6 +1,11 @@
 import "server-only";
 
-import type { LeadSource, LeadStatus, MessageProvider, Prisma } from "@prisma/client";
+import {
+  Prisma,
+  type LeadSource,
+  type LeadStatus,
+  type MessageProvider,
+} from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { hashSecret } from "@/lib/inbound-crypto";
 import { normalizeEmailAddresses } from "./matching-service";
@@ -242,6 +247,7 @@ async function attach(
       classificationIsManual: true,
       matchKind: "MATCHED",
       matchReason: "lead created or selected from conversation",
+      matchCandidateLeadIds: Prisma.JsonNull,
     },
   });
   if (updated.count !== 1) throw new Error("Conversation was not attached.");

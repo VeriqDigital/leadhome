@@ -1,8 +1,10 @@
 import "server-only";
 
-import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { findLeadForConversation, type LeadMatchResult } from "./matching-service";
+import {
+  applyConversationLeadMatch,
+  findLeadForConversation,
+} from "./matching-service";
 import type {
   MessageProvider,
   NormalizedConversation,
@@ -60,17 +62,6 @@ function distinctMessages(messages: NormalizedMessage[]) {
   return [...byProviderId.values()].sort(
     (left, right) => left.occurredAt.getTime() - right.occurredAt.getTime(),
   );
-}
-
-function matchData(match: LeadMatchResult) {
-  return {
-    matchKind: match.kind,
-    matchReason: match.reason,
-    matchCandidateLeadIds:
-      match.kind === "AMBIGUOUS"
-        ? (match.candidateLeadIds as Prisma.InputJsonValue)
-        : Prisma.JsonNull,
-  };
 }
 
 /**
@@ -395,97 +386,17 @@ async function importConversation({
     messages,
     accountAddress: account.address,
   });
-  await applyMatch({
+  const applied = await applyConversationLeadMatch({
     ownerId,
     conversationId: imported.conversation.id,
     match,
-    summary,
   });
+  if (applied.matched) summary.conversationsMatched++;
+  else if (applied.needsReview) summary.conversationsNeedingReview++;
   return {
     conversationId: imported.conversation.id,
     messagesCreated: imported.createdMessages,
   };
-}
-
-async function applyMatch({
-  ownerId,
-  conversationId,
-  match,
-  summary,
-}: {
-  ownerId: string;
-  conversationId: string;
-  match: LeadMatchResult;
-  summary: ImportSummary;
-}) {
-  const needsReview = await prisma.$transaction(async (tx) => {
-    const current = await tx.conversation.findFirst({
-      where: { id: conversationId, ownerId },
-      select: {
-        leadId: true,
-        subject: true,
-        reviewState: true,
-        manuallyDetached: true,
-      },
-    });
-    if (!current) throw new Error("Imported conversation ownership changed.");
-
-    await tx.conversation.update({
-      where: { id: conversationId },
-      data: matchData(match),
-    });
-    if (match.kind !== "MATCHED") {
-      return current.reviewState === "NEEDS_REVIEW";
-    }
-    if (current.leadId === match.leadId) {
-      if (current.reviewState === "NEEDS_REVIEW") {
-        await tx.conversation.update({
-          where: { id: conversationId },
-          data: { reviewState: "MATCHED" },
-        });
-      }
-      return false;
-    }
-    if (
-      current.leadId ||
-      current.manuallyDetached ||
-      current.reviewState !== "NEEDS_REVIEW"
-    ) {
-      return false;
-    }
-    const attached = await tx.conversation.updateMany({
-      where: {
-        id: conversationId,
-        ownerId,
-        leadId: null,
-        manuallyDetached: false,
-        reviewState: "NEEDS_REVIEW",
-      },
-      data: { leadId: match.leadId, reviewState: "MATCHED" },
-    });
-    if (attached.count) {
-      await recordActivity(tx, {
-        ownerId,
-        leadId: match.leadId,
-        conversationId,
-        type: "CONVERSATION_LINKED",
-        actorType: "SYSTEM",
-        source: "GMAIL",
-        title: "Conversation attached",
-        description: current.subject ?? "No subject",
-        metadata: { reason: match.reason, automatic: true },
-        idempotencyKey: `conversation-auto-link:${conversationId}:${match.leadId}`,
-      });
-      await tx.lead.update({
-        where: { id: match.leadId },
-        data: { updatedAt: new Date() },
-      });
-    }
-    return false;
-  });
-
-  if (match.kind === "MATCHED") summary.conversationsMatched++;
-  else if (needsReview) summary.conversationsNeedingReview++;
 }
 
 // Backwards-compatible name used by the development action in Phase 1.

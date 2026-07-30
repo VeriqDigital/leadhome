@@ -280,24 +280,32 @@ The repository-root `vercel.json` registers:
 ```json
 {
   "path": "/api/cron/jobs",
-  "schedule": "* * * * *"
+  "schedule": "0 10 * * *"
 }
 ```
 
-This means once per minute, and Vercel cron expressions always use UTC.
-Vercel's [current Cron usage limits](https://vercel.com/docs/cron-jobs/usage-and-pricing)
-allow a one-minute minimum on Pro and Enterprise. Hobby is limited to once per
-day and will reject this deployment, so LeadHome's intended production cadence
-requires Vercel Pro before deployment. Cron invokes the production deployment.
+This is the committed Hobby-compatible production schedule: once daily at
+10:00 UTC. Vercel cron expressions always use UTC. Vercel's
+[current Cron usage limits](https://vercel.com/docs/cron-jobs/usage-and-pricing)
+allow once-per-minute invocation on Pro and Enterprise, but that faster cadence
+is a future configuration and is not the current production schedule. Cron
+invokes the production deployment.
 Do not configure `CRON_SECRET` for Preview unless a deliberately isolated
 preview database should process preview jobs; leaving it absent makes preview
 HTTP calls fail closed.
 
-Expected queue start latency is up to roughly one minute, plus Vercel
-scheduling and function startup variability. Vercel does not retry a failed
-cron HTTP invocation. Durable pending/retry rows remain available to the next
-invocation; an interrupted running lease becomes recoverable after
+Automatic queue start latency can currently extend to the next daily run, plus
+Vercel scheduling and function startup variability. Operators can use the
+Vercel Cron dashboard's **Run** control for an on-demand test or to drain
+already queued work sooner. Vercel does not retry a failed cron HTTP
+invocation. Durable pending/retry rows remain available to the next invocation;
+an interrupted running lease becomes recoverable after
 `JOB_STALE_AFTER_SECONDS`.
+
+Production has been smoke-tested through this path: a queued Gmail sync was
+claimed by a manual Vercel Cron run, completed, and imported conversations and
+messages that appeared in the Inbox. This verifies the deployed trigger and
+worker path without changing the at-least-once delivery model.
 
 ### Deployment checklist
 
@@ -310,7 +318,9 @@ npx prisma migrate status
 
 Then:
 
-1. Confirm the Vercel project is on Pro or Enterprise and Node.js is `24.x`.
+1. Confirm the Vercel project uses Node.js `24.x`. Hobby supports the committed
+   daily schedule; a future once-per-minute schedule requires Pro or
+   Enterprise.
 2. In **Project → Settings → Environment Variables**, create `CRON_SECRET` for
    **Production** only. Generate at least 32 random bytes outside the
    repository; a 43-character base64url value is one suitable representation.
@@ -319,7 +329,7 @@ Then:
 4. Deploy the commit. Do not manually create a second dashboard schedule;
    `vercel.json` is the source of truth.
 5. Open **Project → Settings → Cron Jobs** and verify `/api/cron/jobs` has the
-   `* * * * *` schedule.
+   `0 10 * * *` schedule.
 6. Use **View Logs** for that cron entry and verify structured start/finish
    records contain only counts, stop reason, and duration.
 
@@ -353,11 +363,12 @@ Invoke-WebRequest `
   -SkipHttpErrorCheck
 ```
 
-For a production smoke test, use the same authorized request against the
-production HTTPS URL, inspect the returned counts, enqueue one synthetic test
-job through the normal application flow, invoke again, and confirm a repeated
-invocation does not duplicate its business result. Never put the real secret
-in source control, a committed fixture, or a URL.
+For a production smoke test, enqueue bounded work through the normal
+application flow, open the production Cron Jobs entry in Vercel, and use its
+**Run** control. Inspect the structured invocation logs and resulting
+owner-visible status. A repeated invocation must not duplicate the business
+result. Never put the real secret in source control, a committed fixture, or a
+URL.
 
 ## Environment variables
 

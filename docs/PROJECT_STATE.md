@@ -1,12 +1,9 @@
 # LeadHome Project State
 
-This document is a repository-verified baseline for future development. It
-describes the implementation currently present in the working tree. The
-Unified Activity Timeline migrations are deployed to the configured database,
-and the milestone's Prisma, test, TypeScript, lint, and production-build checks
-have passed. Subsequent lead-detail, follow-up-form, development-runtime, and
-worker corrections are stabilization work rather than another completed Phase
-2 milestone.
+This document is the current implementation snapshot for future development.
+The Unified Activity Timeline, its later stabilization work, and Smart Lead
+Matching are verified. Automatic Company Detection is the next open Phase 2
+milestone.
 
 ## Product Overview
 
@@ -51,12 +48,12 @@ other channels, but those adapters are not implemented.
   script for installed Firefox and Chrome.
 - **External services:** Google OAuth and the Gmail read-only API, OpenAI, and
   PostgreSQL.
-- **Hosting assumptions:** The directory is linked to a Vercel project, and
-  the build script runs Prisma generation before `next build`. The repository
-  and linked project both target Node 24.x. The repository does not install a
-  production job schedule; a persistent worker or external scheduler must
-  call the protected runner endpoint. A linked Vercel project is evidence of
-  intended hosting, not evidence that the current build is deployed.
+- **Hosting:** The directory is linked to a Vercel project, and the build
+  script runs Prisma generation before `next build`. The repository and linked
+  project both target Node 24.x. `vercel.json` installs the current
+  Hobby-compatible queue-drain schedule at `0 10 * * *` (daily at 10:00 UTC).
+  Production Gmail OAuth, token persistence, manual Cron execution, job
+  completion, and Inbox import have been smoke-tested successfully.
 
 ## Repository Structure
 
@@ -134,7 +131,12 @@ a real multi-user database.
 - **Messaging:** `CommunicationAccount` represents an owner/provider mailbox.
   `GmailCredential` is a one-to-one encrypted credential record.
   `Conversation` is unique within an account and keeps user-owned attachment,
-  classification, review, manual-detach, and lifecycle state.
+  classification, review, manual-detach, lifecycle, and latest matching-result
+  state. Its existing `matchKind`, `matchReason`, and
+  `matchCandidateLeadIds` fields cache the most recent deterministic
+  evaluation. `ConversationLeadMatchDismissal` suppresses one candidate for one
+  conversation and evidence fingerprint through owner-composite relations to
+  both records.
   `Message` is unique by account/provider message ID and retains normalized
   message content and timestamps.
 - **Tasks:** `Task` is the canonical work/reminder record. Lead and
@@ -165,6 +167,10 @@ Important invariants include:
 - Conversations and messages are deduplicated by provider identifiers.
 - `Conversation.lastMessageAt` is maintained monotonically and Inbox sorting
   uses explicit null-last ordering.
+- Smart-match candidate relationships are owner-composite. A dismissal is
+  unique by owner, conversation, lead, and evidence fingerprint; changed
+  evidence can therefore be considered without resurfacing the same dismissed
+  evidence.
 - A lead's `nextFollowUpDate` equals the earliest due date of its open
   `FOLLOW_UP` tasks.
 - One owner/type/idempotency key identifies an active job; terminal services
@@ -184,6 +190,13 @@ applied migration and corrects legacy Gmail-message and automatic-link
 provenance where surviving canonical data is sufficient. Neither migration
 invents events for older leads that never had activity records.
 
+Additive migration
+`20260729192000_add_smart_lead_match_dismissals` adds
+`ConversationLeadMatchDismissal`, the `Lead(id, userId)` composite uniqueness
+needed for its owner-composite lead relation, and bounded dismissal indexes. It
+does not rewrite the existing conversation match cache or alter existing
+attachments.
+
 ## Background Job System
 
 LeadHome uses one generic PostgreSQL queue for `GMAIL_SYNC` and
@@ -193,7 +206,7 @@ full lifecycle.
 Server actions enqueue typed jobs and reuse an existing active job through
 owner/type/idempotency uniqueness. Browser requests do not perform Gmail or
 OpenAI work. The local polling worker calls `POST /api/internal/jobs/run`;
-Vercel Cron calls `GET /api/cron/jobs` once per minute in production. Both
+Vercel Cron calls `GET /api/cron/jobs` daily at 10:00 UTC in production. Both
 machine-authenticated routes invoke `lib/jobs/runner.ts`, which recovers stale
 work, atomically claims eligible rows with `FOR UPDATE SKIP LOCKED`, assigns a
 unique lease owner, and dispatches by `JobType`.
@@ -217,9 +230,10 @@ Gmail jobs call the existing provider adapter and provider-agnostic importer.
 Conversation-analysis jobs prepare bounded content, invoke the configured
 OpenAI provider, validate structured output, and lease-fence canonical
 analysis persistence. `vercel.json` installs the production queue drainer at
-`* * * * *` UTC. It runs sequentially with a 10-job maximum, a 240-second
-internal budget, and a 300-second Node.js Function limit. Vercel Pro is
-required because Hobby supports only daily cron execution.
+`0 10 * * *` UTC. It runs sequentially with a 10-job maximum, a 240-second
+internal budget, and a 300-second Node.js Function limit. Vercel's dashboard
+**Run** control can invoke the route during testing. Once-per-minute automatic
+draining remains a future Vercel Pro configuration.
 
 The local polling worker removes each delay's shutdown-signal abort listener
 whether the timer completes normally or the process is stopping. This prevents
@@ -256,13 +270,30 @@ Users can connect a Gmail mailbox with read-only scope, request a background
 sync, inspect user-friendly progress/results, search and filter imported
 conversations, review full stored threads, classify conversations, change
 review/lifecycle state, attach or detach a lead, create a lead from a
-conversation, and create related tasks.
+conversation, and create related tasks. Unattached conversations can show up
+to three deterministic Possible match candidates with reasons, inspect/attach,
+choose-another, dismiss, and explicit per-conversation Recheck controls.
 
 Imports are normalized behind a provider interface, preserve user-owned
 conversation fields, deduplicate accounts/conversations/messages, maintain
-last-message time monotonically, and use deterministic owner-scoped matching.
-First import establishes a quiet historical baseline; later messages can
-produce meaningful events. LeadHome does not send mail or modify Gmail.
+last-message time monotonically, and use one deterministic owner-scoped
+matching service. Only one unique exact normalized participant-email
+candidate may auto-attach. Durable website-submission identity, ambiguous
+exact email, and exact normalized display-name evidence can produce
+review-only suggestions; fuzzy name, company, domain, body extraction, and AI
+do not attach leads. First import
+establishes a quiet historical baseline; later messages can produce meaningful
+events. LeadHome does not send mail or modify Gmail.
+
+Matching ignores outbound identities and the exact connected mailbox address,
+not every address sharing its domain. This preserves customers on public/shared
+domains while preventing the owner's mailbox from becoming a candidate.
+
+Mailbox authorization is separate from account login. Gmail uses
+`/api/gmail/connect` and `/api/gmail/callback`; Auth.js Google sign-in uses
+`/api/auth/callback/google`. Connect/Reconnect controls are ordinary
+server-rendered, non-prefetched anchors, so they do not depend on hydration or
+share Auth.js's callback/PKCE cookie namespace.
 Details are in [inbox.md](./inbox.md),
 [messaging-import.md](./messaging-import.md), and
 [google-gmail-setup.md](./google-gmail-setup.md).
@@ -325,6 +356,10 @@ conversation attachment and detachment, conversation status changes, AI
 analysis completion, task lifecycle changes, pipeline moves, and follow-up
 summary synchronization.
 
+Smart-match evaluation, display, ranking, no-match results, and dismissals do
+not add timeline noise. Automatic and explicitly approved attachment changes
+continue to use the existing `LeadActivity` types and recording service.
+
 Lead detail displays date-grouped activity, actor/source context, related
 entity links, missing-entity fallbacks, relative and exact times, loading and
 error route states, and cursor-based older-history loading. Initial activity
@@ -340,19 +375,27 @@ Settings shows account/login state, supports safe Google login linking and
 unlinking, exposes the Conversation Intelligence opt-in and configuration
 availability, manages Gmail connections and recent sync status, and manages
 website sources. Gmail and website forms are the only implemented external
-acquisition integrations.
+acquisition integrations. Account Security Link/Unlink Google remains an
+Auth.js action; it is distinct from the plain-anchor custom Gmail mailbox
+Connect/Reconnect flow.
 
 ## Important Workflows
 
 - **Gmail synchronization:** Connect Gmail through a short-lived OAuth state;
   store encrypted tokens; enqueue an owner-scoped `GMAIL_SYNC` job; claim it
-  through the worker; normalize and import threads; match leads; record
-  meaningful activity; persist safe progress/result; refresh the Inbox when
-  terminal.
+  through the worker; normalize and import threads; evaluate the same central
+  owner-scoped lead matcher; record only meaningful attachment/import
+  activity; persist safe progress/result; refresh the Inbox when terminal.
 - **Attach a conversation:** Authenticate; validate both conversation and lead
   ownership; update attachment/review/match state transactionally; update the
   lead's activity timestamp behavior; record detached/attached events only
   when the relationship changes.
+- **Review a possible match:** Load only owned candidates; present stable
+  body-free reasons; explicitly attach through the existing service, choose
+  another owned lead, or persist an owner-composite dismissal for the current
+  evidence fingerprint. Recheck is an authenticated action that loads one
+  owned conversation and at most 100 identity-only inbound messages before
+  applying the same matcher.
 - **Run AI analysis:** Check owner, preference, conversation eligibility,
   content hash, and active idempotent job; enqueue typed work; prepare bounded
   plain text; call OpenAI from the worker; validate strict output; lease-fence
@@ -397,7 +440,8 @@ Important route handlers are:
 Server actions cover authentication, lead CRUD, pipeline movement, Inbox
 controls, conversation attachment/detachment and lead creation, Gmail
 enqueue/disconnect, task lifecycle, website source management, Conversation
-Intelligence preference, and analysis enqueue/reanalysis.
+Intelligence preference, analysis enqueue/reanalysis, and owner-scoped
+possible-match confirmation, dismissal, and single-conversation Recheck.
 
 The common mutation pattern is: authenticate, parse with Zod or a bounded
 typed parser, perform owner-scoped domain work (usually in a Prisma
@@ -472,6 +516,11 @@ Verified protections include:
 - Unique provider IDs and transactional import behavior for message
   idempotency.
 - Monotonic conversation last-message timestamps.
+- One owner-scoped matching service, bounded identity-only candidate queries,
+  owner-composite dismissal relations, and owner validation before candidate
+  confirmation or dismissal.
+- Manual attachments override automation; manual detach and evidence-specific
+  dismissal suppress automatic or repeated matching as appropriate.
 - Typed activity enums, bounded text, structured metadata, explicit occurrence
   time, owner-scoped idempotency, and stable cursor ordering.
 - Atomic job claims, leases, heartbeats, fenced writes, bounded retries,
@@ -487,9 +536,9 @@ Known weaknesses include the lack of multi-factor authentication, password
 reset, roles/teams, comprehensive audit administration, and browser end-to-end
 security tests. Expired/consumed `OAuthState` rows have no documented cleanup
 service. Public Gmail use still depends on completing Google's consent and
-scope-verification requirements. Production job progress depends on an active
-Vercel Pro cron, a valid Production `CRON_SECRET`, healthy database/provider
-connections, and operator monitoring.
+scope-verification requirements. Production queue progress depends on the
+daily Cron (or an operator using **Run**), a valid Production `CRON_SECRET`,
+healthy database/provider connections, and operator monitoring.
 
 ## Existing Tests and Verification
 
@@ -519,8 +568,10 @@ repository contains unit and structural regression coverage for:
 Normal tests mock external providers and database clients. The OpenAI smoke
 test is opt-in and uses synthetic content. The Selenium scenario is a focused
 regression rather than a broad browser suite, and most tests are not
-real-PostgreSQL integration tests. Production Gmail and OpenAI behavior still
-require environment-specific smoke verification.
+real-PostgreSQL integration tests. Production Gmail OAuth, token storage, one
+manually invoked queued sync, and resulting Inbox import have been verified;
+future provider changes and OpenAI behavior still require environment-specific
+smoke verification.
 
 Repository verification commands are:
 
@@ -546,13 +597,14 @@ follow-up prop flow passed the focused Firefox and Chrome scenario. Node
 and matches Vercel's configured 24.x runtime. The worker regression also
 verified zero retained abort listeners after each of 12 polling delays.
 
-Current verification passes under Node 24.18.0: Prisma format, schema
-validation, and client generation; deployment of
-`20260727230000_unified_activity_timeline` and
-`20260727231500_correct_unified_activity_provenance`; migration status with all
-17 migrations applied; 50 focused job/cron regressions; 384 full-suite tests
-with one opt-in OpenAI smoke test skipped; TypeScript; ESLint; and the Next.js
-production build, including dynamic `/api/cron/jobs` output.
+The prior Unified Activity Timeline and production-job infrastructure checks
+passed under Node 24.18.0. Smart Lead Matching final verification also passed:
+14 focused files / 114 tests, then 78 full-suite files / 428 tests with only
+the opt-in OpenAI smoke test skipped. Prisma format, validate, and normal
+client generation passed. Migration
+`20260729192000_add_smart_lead_match_dismissals` deployed successfully, and
+Prisma reports all 18 migrations applied. TypeScript, ESLint, the Node 24
+production build, and `git diff --check` passed.
 
 ## Known Limitations and Technical Debt
 
@@ -562,11 +614,15 @@ production build, including dynamic `/api/cron/jobs` output.
 - The dashboard activity list is recency-based with a static meaningful-type
   allowlist, not a configurable priority or attention model.
 - There is no automatic periodic Gmail enqueue. Vercel Cron drains durable
-  jobs already created by user/application activity once per minute.
+  jobs already created by user/application activity once daily at 10:00 UTC;
+  operators can use its dashboard **Run** control between scheduled runs.
 - Gmail is read-only. Email sending, drafts, attachments/proposals analysis,
   Outlook, social messaging, SMS, and WhatsApp are not implemented.
-- Smart matching is deliberately limited to durable submission identifiers
-  and exact normalized email evidence. Fuzzy or AI matching is absent.
+- Smart matching is deliberately deterministic: only one unique exact
+  normalized participant-email candidate may auto-attach. Durable submission,
+  ambiguous exact-email, and exact display-name evidence require review.
+  Candidate lists are limited to three. Fuzzy/company/domain/body-extraction
+  and AI matching are absent.
 - AI suggestions cannot be applied to CRM fields in a reviewed confirmation
   flow; they are display-only except for explicit task-form prefill.
 - There is no notification center, automation rules engine, team workspace,
@@ -591,9 +647,9 @@ Inbox and pipeline, transactional task/follow-up behavior, a generic
 recoverable job system, conservative AI analysis, unified activity history,
 and substantial automated regression coverage.
 
-Public or paid readiness is blocked by verifying production worker operations
-and alerting, Google public-app review, broader end-to-end and real-database
-testing,
+Public or paid readiness is blocked by production queue monitoring/alerting,
+the current daily queue latency, Google public-app review, broader end-to-end
+and real-database testing,
 account-recovery/security features, and operational monitoring. The product
 also lacks team administration, billing, and the notification/attention
 workflows expected for broader self-service use.
@@ -601,8 +657,9 @@ workflows expected for broader self-service use.
 ## Current Phase 2 Priorities
 
 - [x] **Unified Activity Timeline**
-- [ ] **Smart Lead Matching** — exact owner-scoped email and submission-ID
-  matching exist as a conservative foundation; the broader milestone remains.
+- [x] **Smart Lead Matching** — centralized automatic/suggested matching,
+  dismissal suppression, bounded recheck, owner isolation, and final
+  verification are complete.
 - [ ] **Automatic Company Detection** — AI may suggest a company, but no
   automatic or reviewed application flow exists.
 - [ ] **Contact Extraction** — AI may suggest contact details, but extraction
@@ -625,6 +682,13 @@ workflows expected for broader self-service use.
 - Keep provider normalization separate from provider-agnostic import logic.
 - Preserve provider-owned and user-owned messaging fields explicitly; imports
   must not overwrite user decisions.
+- Keep one central owner-scoped matching service. Only one unique exact
+  normalized participant-email candidate may attach automatically;
+  submission, ambiguous, or name-only evidence requires explicit
+  confirmation.
+- Cache the latest bounded result on `Conversation`, use evidence-fingerprinted
+  dismissal rows for candidate suppression, and preserve manual detach as the
+  stronger conversation-wide override.
 - Use monotonic timestamps and database uniqueness for retry-safe ingestion.
 - Record meaningful business activity through `lib/activity-service.ts`;
   avoid direct duplicate event-building paths and low-level sync noise.
