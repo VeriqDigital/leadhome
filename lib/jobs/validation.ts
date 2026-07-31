@@ -3,6 +3,9 @@ import "server-only";
 import { JobType } from "@prisma/client";
 import { z } from "zod";
 import type {
+  CompanyDetectionJobPayload,
+  CompanyDetectionJobProgress,
+  CompanyDetectionJobResult,
   ConversationAnalysisJobPayload,
   ConversationAnalysisJobProgress,
   ConversationAnalysisJobResult,
@@ -113,6 +116,38 @@ export const conversationAnalysisJobResultSchema = z.object({
   inputTruncated: z.boolean(),
 }).strict();
 
+export const companyDetectionJobPayloadSchema = z.object({
+  conversationId: z.cuid(),
+  trigger: z.literal("GMAIL_IMPORT"),
+}).strict();
+
+export const companyDetectionJobProgressSchema = z.object({
+  phase: z.enum(["QUEUED", "DETECTING", "COMPLETED"]),
+  processed: z.number().int().nonnegative().max(1),
+  total: z.number().int().nonnegative().max(1).optional(),
+  percent: z.number().min(0).max(100).optional(),
+  message: z.string().trim().min(1).max(160),
+}).strict();
+
+export const companyDetectionJobResultSchema = z.object({
+  conversationId: z.cuid(),
+  changed: z.boolean(),
+  outcome: z.enum([
+    "APPLIED",
+    "NO_CHANGE",
+    "STALE",
+    "NOT_APPLICABLE",
+  ]),
+  companyState: z.enum([
+    "NOT_APPLICABLE",
+    "COMPANY_PRESENT",
+    "SUGGESTED",
+    "NO_SUGGESTION",
+  ]),
+  leadId: z.cuid().nullable(),
+  durationMs: z.number().int().nonnegative().max(86_400_000),
+}).strict();
+
 function assertBoundedJson(value: unknown, label: string): void {
   const serialized = JSON.stringify(value);
   if (serialized === undefined || Buffer.byteLength(serialized, "utf8") > MAX_JOB_JSON_BYTES) {
@@ -124,13 +159,19 @@ export function parseJobPayload<T extends JobType>(
   type: T,
   value: unknown,
 ): JobPayloadByType[T] {
-  let parsed: GmailSyncJobPayload | ConversationAnalysisJobPayload;
+  let parsed:
+    | GmailSyncJobPayload
+    | ConversationAnalysisJobPayload
+    | CompanyDetectionJobPayload;
   switch (type) {
     case JobType.GMAIL_SYNC:
       parsed = gmailSyncJobPayloadSchema.parse(value);
       break;
     case JobType.CONVERSATION_ANALYSIS:
       parsed = conversationAnalysisJobPayloadSchema.parse(value);
+      break;
+    case JobType.COMPANY_DETECTION:
+      parsed = companyDetectionJobPayloadSchema.parse(value);
       break;
     default:
       throw new Error(`Unsupported job type: ${String(type)}`);
@@ -141,10 +182,15 @@ export function parseJobPayload<T extends JobType>(
 
 export function parseJobProgress(value: unknown): JobProgress {
   const gmail = gmailSyncJobProgressSchema.safeParse(value);
-  const parsed: GmailSyncJobProgress | ConversationAnalysisJobProgress =
-    gmail.success
-      ? gmail.data
-      : conversationAnalysisJobProgressSchema.parse(value);
+  const analysis = conversationAnalysisJobProgressSchema.safeParse(value);
+  const parsed:
+    | GmailSyncJobProgress
+    | ConversationAnalysisJobProgress
+    | CompanyDetectionJobProgress = gmail.success
+    ? gmail.data
+    : analysis.success
+      ? analysis.data
+      : companyDetectionJobProgressSchema.parse(value);
   assertBoundedJson(parsed, "Job progress");
   return parsed;
 }
@@ -153,13 +199,19 @@ export function parseJobResult<T extends JobType>(
   type: T,
   value: unknown,
 ): JobResultByType[T] {
-  let parsed: GmailSyncJobResult | ConversationAnalysisJobResult;
+  let parsed:
+    | GmailSyncJobResult
+    | ConversationAnalysisJobResult
+    | CompanyDetectionJobResult;
   switch (type) {
     case JobType.GMAIL_SYNC:
       parsed = gmailSyncJobResultSchema.parse(value);
       break;
     case JobType.CONVERSATION_ANALYSIS:
       parsed = conversationAnalysisJobResultSchema.parse(value);
+      break;
+    case JobType.COMPANY_DETECTION:
+      parsed = companyDetectionJobResultSchema.parse(value);
       break;
     default:
       throw new Error(`Unsupported job type: ${String(type)}`);

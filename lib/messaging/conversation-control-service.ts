@@ -15,11 +15,12 @@ import {
   enqueueConversationAnalysisAfterLeadLink,
 } from "@/lib/ai/conversation-analysis/job-service";
 import { recordActivity } from "@/lib/activity-service";
+import { detectCompanyAfterAttachment } from "./company-detection-service";
 
 const controlsSelect = {
   id: true,
   leadId: true,
-  lead: { select: { id: true, name: true, email: true } },
+  lead: { select: { id: true, name: true, email: true, company: true } },
   classification: true,
   reviewState: true,
   status: true,
@@ -30,7 +31,12 @@ const controlsSelect = {
 export type CanonicalConversationControlsDto = {
   id: string;
   leadId: string | null;
-  lead: { id: string; name: string; email: string | null } | null;
+  lead: {
+    id: string;
+    name: string;
+    email: string | null;
+    company: string | null;
+  } | null;
   classification: ConversationClassification;
   reviewState: ConversationReviewState;
   status: ConversationStatus;
@@ -45,7 +51,12 @@ export type PersistedConversationMutation = {
 function dto(row: {
   id: string;
   leadId: string | null;
-  lead: { id: string; name: string; email: string | null } | null;
+  lead: {
+    id: string;
+    name: string;
+    email: string | null;
+    company: string | null;
+  } | null;
   classification: ConversationClassification;
   reviewState: ConversationReviewState;
   status: ConversationStatus;
@@ -282,10 +293,23 @@ export async function updateConversationControls(input: {
     };
   });
   if (result.changed && "attached" in result && result.attached) {
+    await detectCompanyAfterAttachment(
+      input.ownerId,
+      input.conversationId,
+    );
     await enqueueConversationAnalysisAfterLeadLink(
       input.ownerId,
       input.conversationId,
     );
+    const canonical = await readCanonical(
+      prisma,
+      input.ownerId,
+      input.conversationId,
+    );
+    return {
+      changed: result.changed,
+      conversation: dto(canonical),
+    };
   }
   return {
     changed: result.changed,

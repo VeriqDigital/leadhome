@@ -32,6 +32,9 @@ import {
   conversationAnalysisJobResultSchema,
 } from "@/lib/jobs/validation";
 import { recordActivity } from "@/lib/activity-service";
+import {
+  detectCompanyAfterAttachment,
+} from "@/lib/messaging/company-detection-service";
 
 function assertLeaseMutation(result: { kind: "ok" | "cancelled" | "lost" }) {
   if (result.kind === "cancelled") throw new JobCancelledError();
@@ -438,6 +441,10 @@ export async function runConversationAnalysisJob(
       });
     });
     assertLeaseMutation(persisted);
+    const companyDetection = await detectCompanyAfterAttachment(
+      job.ownerId,
+      payload.data.conversationId,
+    );
     logJobEvent("analysis_completed", {
       jobId: job.id,
       jobType: JobType.CONVERSATION_ANALYSIS,
@@ -452,7 +459,20 @@ export async function runConversationAnalysisJob(
     });
     revalidatePath("/inbox");
     revalidatePath("/");
-    if (source.leadId) revalidatePath(`/leads/${source.leadId}`);
+    const affectedLeadIds = new Set(
+      [
+        source.leadId,
+        companyDetection?.companyView.lead?.id,
+      ].filter((leadId): leadId is string => Boolean(leadId)),
+    );
+    if (affectedLeadIds.size) {
+      revalidatePath("/leads");
+      revalidatePath("/leads/[id]", "page");
+      revalidatePath("/pipeline");
+      for (const leadId of affectedLeadIds) {
+        revalidatePath(`/leads/${leadId}`);
+      }
+    }
     return completedResult;
   } catch (error) {
     if (

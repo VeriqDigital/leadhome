@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   config: vi.fn(),
   log: vi.fn(),
   revalidatePath: vi.fn(),
+  detectCompany: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -51,6 +52,9 @@ vi.mock("@/lib/jobs/logging", () => ({
 }));
 vi.mock("next/cache", () => ({
   revalidatePath: mocks.revalidatePath,
+}));
+vi.mock("@/lib/messaging/company-detection-service", () => ({
+  detectCompanyAfterAttachment: mocks.detectCompany,
 }));
 
 import { runConversationAnalysisJob } from "./conversation-analysis";
@@ -217,6 +221,7 @@ beforeEach(() => {
     { id: conversationId, leadId: "lead-a" },
   ]);
   mocks.createActivities.mockResolvedValue({ count: 1 });
+  mocks.detectCompany.mockResolvedValue(null);
   mocks.withLease.mockImplementation(
     async (
       _jobId: string,
@@ -249,6 +254,11 @@ beforeEach(() => {
 describe("conversation analysis job handler", () => {
   it("persists validated canonical output and usage through the owned lease", async () => {
     const provider = { analyze: vi.fn().mockResolvedValue(providerResult()) };
+    mocks.detectCompany.mockResolvedValueOnce({
+      companyView: {
+        lead: { id: "lead-b" },
+      },
+    });
 
     const result = await runConversationAnalysisJob(job(), {
       workerId: "worker-123",
@@ -328,6 +338,19 @@ describe("conversation analysis job handler", () => {
       "SAVING",
     ]);
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/inbox");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/leads");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      "/leads/[id]",
+      "page",
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/pipeline");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/leads/lead-a");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/leads/lead-b");
+    expect(mocks.detectCompany).toHaveBeenCalledWith(
+      "owner-a",
+      conversationId,
+    );
   });
 
   it("skips no-content input without calling the provider", async () => {

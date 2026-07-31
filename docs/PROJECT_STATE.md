@@ -2,8 +2,9 @@
 
 This document is the current implementation snapshot for future development.
 The Unified Activity Timeline, its later stabilization work, and Smart Lead
-Matching are verified. Automatic Company Detection is the next open Phase 2
-milestone.
+Matching are implemented and verified. Automatic Company Detection is
+implemented and awaiting its final post-job-integration runtime validation;
+Contact Extraction remains the next planned milestone after that gate.
 
 ## Product Overview
 
@@ -136,7 +137,10 @@ a real multi-user database.
   `matchCandidateLeadIds` fields cache the most recent deterministic
   evaluation. `ConversationLeadMatchDismissal` suppresses one candidate for one
   conversation and evidence fingerprint through owner-composite relations to
-  both records.
+  both records. `ConversationCompanySuggestionDismissal` similarly suppresses
+  derived company evidence for the current owner, conversation, attached lead,
+  and fingerprint. Company suggestions themselves are not persisted because
+  `Lead.company` remains the only company representation.
   `Message` is unique by account/provider message ID and retains normalized
   message content and timestamps.
 - **Tasks:** `Task` is the canonical work/reminder record. Lead and
@@ -171,6 +175,10 @@ Important invariants include:
   unique by owner, conversation, lead, and evidence fingerprint; changed
   evidence can therefore be considered without resurfacing the same dismissed
   evidence.
+- Company suggestions are derived from current stored evidence. A company
+  dismissal is unique by owner, conversation, attached lead, and evidence
+  fingerprint; only a current eligible candidate may update a still-blank
+  `Lead.company`.
 - A lead's `nextFollowUpDate` equals the earliest due date of its open
   `FOLLOW_UP` tasks.
 - One owner/type/idempotency key identifies an active job; terminal services
@@ -197,11 +205,20 @@ needed for its owner-composite lead relation, and bounded dismissal indexes. It
 does not rewrite the existing conversation match cache or alter existing
 attachments.
 
+Additive migration
+`20260729210000_add_company_suggestion_dismissals` adds
+`ConversationCompanySuggestionDismissal` with owner-composite conversation and
+lead relations, an evidence source/fingerprint, candidate display value,
+dismissal time, one unique dismissal key, and a bounded lookup index. It does
+not add a `Company` model, duplicate `Lead.company`, rewrite leads, or create a
+new activity type. The same migration extends `JobType` with
+`COMPANY_DETECTION` for non-blocking Gmail-import follow-up work.
+
 ## Background Job System
 
-LeadHome uses one generic PostgreSQL queue for `GMAIL_SYNC` and
-`CONVERSATION_ANALYSIS`. See [background-jobs.md](./background-jobs.md) for the
-full lifecycle.
+LeadHome uses one generic PostgreSQL queue for `GMAIL_SYNC`,
+`CONVERSATION_ANALYSIS`, and import-triggered `COMPANY_DETECTION`. See
+[background-jobs.md](./background-jobs.md) for the full lifecycle.
 
 Server actions enqueue typed jobs and reuse an existing active job through
 owner/type/idempotency uniqueness. Browser requests do not perform Gmail or
@@ -229,7 +246,10 @@ The runner and handlers provide:
 Gmail jobs call the existing provider adapter and provider-agnostic importer.
 Conversation-analysis jobs prepare bounded content, invoke the configured
 OpenAI provider, validate structured output, and lease-fence canonical
-analysis persistence. `vercel.json` installs the production queue drainer at
+analysis persistence. Company-detection jobs perform only a bounded,
+owner-scoped canonical database reevaluation after Gmail automatically
+attaches a lead; interactive and Fake-provider attachment paths remain
+immediate. `vercel.json` installs the production queue drainer at
 `0 10 * * *` UTC. It runs sequentially with a 10-job maximum, a 240-second
 internal budget, and a 300-second Node.js Function limit. Vercel's dashboard
 **Run** control can invoke the route during testing. Once-per-minute automatic
@@ -298,6 +318,24 @@ no-match text from contradicting current candidates. Recovery, repeated
 **Recheck matches** requests, and dismissal remain idempotent and do not create
 activity unless a real automatic attachment occurs.
 
+After any of the four existing attachment service paths, the centralized
+database-only company detector evaluates the attached owned lead without
+blocking Gmail or adding a job/LLM call. It may automatically fill only a
+still-blank `Lead.company` when credible external inbound identity resolves to
+one recognized business domain and other owned leads on that domain agree on
+one normalized company. Bounded-query overflow, association ambiguity, a
+conflicting structured AI company, a dismissal, a changed attachment, or a
+concurrent manual company edit prevents the automatic write.
+
+Public/disposable/relay/system/connected/outbound/malformed identities and
+unrelated recipients are excluded. A conservative explicit suffix utility
+handles recognized subdomains and fails closed elsewhere. A structured
+analysis company with at least `0.7` confidence and cited message evidence, or
+a label formatted from a business domain, is suggestion-only. The Inbox
+provides owner-scoped **Apply company**, **Dismiss**, evidence, and
+**Recheck company** controls backed by canonical state. Only an actual company
+change records the existing `COMPANY_CHANGED` event.
+
 Mailbox authorization is separate from account login. Gmail uses
 `/api/gmail/connect` and `/api/gmail/callback`; Auth.js Google sign-in uses
 `/api/auth/callback/google`. Connect/Reconnect controls are ordinary
@@ -318,8 +356,10 @@ sentiment, action suggestions, and missing information.
 
 The Inbox presents expandable summaries, key details, contact links, copy
 controls, and task-prefill links. Suggested data remains separate from Lead
-fields. Analysis never automatically changes pipeline stages, edits leads, or
-creates tasks. See
+fields. A qualifying structured company can feed the separate reviewed
+company-suggestion flow after analysis completes, but AI output never
+automatically edits the lead. Analysis never automatically changes pipeline
+stages or creates tasks. See
 [conversation-intelligence.md](./conversation-intelligence.md).
 
 ### Pipeline
@@ -368,6 +408,9 @@ summary synchronization.
 Smart-match evaluation, display, ranking, no-match results, and dismissals do
 not add timeline noise. Automatic and explicitly approved attachment changes
 continue to use the existing `LeadActivity` types and recording service.
+Company evaluation, suggestions, dismissals, and no-change rechecks likewise
+remain silent; only an actual `Lead.company` write emits the existing
+`COMPANY_CHANGED` activity.
 
 Lead detail displays date-grouped activity, actor/source context, related
 entity links, missing-entity fallbacks, relative and exact times, loading and
@@ -405,6 +448,12 @@ Connect/Reconnect flow.
   evidence fingerprint. **Recheck matches** is an authenticated action that loads one
   owned conversation and at most 100 identity-only inbound messages before
   applying the same matcher.
+- **Detect or review a company:** After attachment or completed analysis, read
+  bounded stored evidence through the central owner-scoped detector. Apply only
+  an unambiguous known-domain association to a still-blank attached lead;
+  otherwise present a review-only AI/domain candidate. Apply, dismiss, and
+  recheck verify the current attachment, company, owner, and evidence
+  fingerprint and return canonical state.
 - **Run AI analysis:** Check owner, preference, conversation eligibility,
   content hash, and active idempotent job; enqueue typed work; prepare bounded
   plain text; call OpenAI from the worker; validate strict output; lease-fence
@@ -531,6 +580,9 @@ Verified protections include:
   confirmation or dismissal.
 - Manual attachments override automation; manual detach and evidence-specific
   dismissal suppress automatic or repeated matching as appropriate.
+- Company detection uses bounded owner-scoped reads, conservative recognized
+  business domains, evidence-fingerprinted dismissals, and compare-and-set
+  writes so ambiguity or concurrent manual changes fail closed.
 - Typed activity enums, bounded text, structured metadata, explicit occurrence
   time, owner-scoped idempotency, and stable cursor ordering.
 - Atomic job claims, leases, heartbeats, fenced writes, bounded retries,
@@ -562,7 +614,8 @@ repository contains unit and structural regression coverage for:
 - Website source and inbound-route authentication, validation, rate limiting,
   and deduplication.
 - Messaging normalization, matching, imports, last-message behavior, Inbox
-  queries, and conversation controls.
+  queries, conversation controls, company detection/domain rules, canonical
+  company suggestions, dismissal/recheck behavior, and attachment triggers.
 - Gmail OAuth/token helpers, provider behavior, job enqueue/status, handlers,
   retries, leases, runner security, and local worker behavior.
 - Conversation Intelligence configuration, input preparation, strict schema,
@@ -617,6 +670,16 @@ passed. Migration
 Prisma reports all 18 migrations applied. TypeScript, ESLint, the Node 24
 production build, and `git diff --check` passed.
 
+Before its final Gmail durable-job handoff, Automatic Company Detection passed
+17 focused files / 193 tests and the full 85-file / 524-test suite on Node
+24.18.0; the separately gated OpenAI smoke test remained skipped (86 files /
+525 tests including that skip). On the complete implementation, Prisma
+format/validate/generate, TypeScript, full ESLint, and `git diff --check`
+passed. The expanded job-focused/full suites and Node 24 production build
+remain the final verification gate. Migration
+`20260729210000_add_company_suggestion_dismissals` is additive and covered by
+the schema/migration regression set.
+
 ## Known Limitations and Technical Debt
 
 - Existing activity rows receive the best timestamp/source/actor information
@@ -633,9 +696,13 @@ production build, and `git diff --check` passed.
   normalized participant-email candidate may auto-attach. Durable submission,
   ambiguous exact-email, and exact display-name evidence require review.
   Candidate lists are limited to three. Fuzzy/company/domain/body-extraction
-  and AI matching are absent.
-- AI suggestions cannot be applied to CRM fields in a reviewed confirmation
-  flow; they are display-only except for explicit task-form prefill.
+  and AI evidence are never lead-identity matching signals.
+- Company detection remains conservative and text-field based rather than a
+  canonical company/domain model. Unknown suffixes, ambiguous associations,
+  conflicting evidence, and bounded-query overflow produce no automatic
+  company write.
+- AI suggestions remain display-only except for explicit task-form prefill and
+  the reviewed, evidence-qualified company suggestion flow.
 - There is no notification center, automation rules engine, team workspace,
   billing, advanced reporting, or sales forecasting.
 - List pagination outside activity commonly uses offset pages or bounded
@@ -671,8 +738,10 @@ workflows expected for broader self-service use.
 - [x] **Smart Lead Matching** — centralized automatic/suggested matching,
   dismissal suppression, bounded recheck, owner isolation, and final
   verification are complete.
-- [ ] **Automatic Company Detection** — AI may suggest a company, but no
-  automatic or reviewed application flow exists.
+- [ ] **Automatic Company Detection** — centralized conservative domain
+  association, reviewed AI/domain suggestions, dismissal/recheck safety,
+  canonical owner-scoped application, and durable Gmail follow-up are
+  implemented; the final runtime validation gate remains.
 - [ ] **Contact Extraction** — AI may suggest contact details, but extraction
   is not an applied CRM workflow.
 - [ ] **Inbox Prioritization**
@@ -702,6 +771,10 @@ workflows expected for broader self-service use.
   stronger conversation-wide override. Clear that override only through the
   explicit owner-scoped recovery action, which immediately reuses the central
   matcher and cannot overwrite a newer attachment.
+- Keep `Lead.company` as the sole company representation. Run one centralized,
+  database-only detector after attachment and completed analysis; automatically
+  apply only an unambiguous known-domain association to a still-blank lead, and
+  require explicit confirmation for AI/domain-formatted suggestions.
 - Use monotonic timestamps and database uniqueness for retry-safe ingestion.
 - Record meaningful business activity through `lib/activity-service.ts`;
   avoid direct duplicate event-building paths and low-level sync noise.
@@ -734,8 +807,8 @@ workflows expected for broader self-service use.
 - Should Recent Activity remain chronological, or should a separate
   explainable Needs Attention score prioritize replies, overdue work, and
   buying signals?
-- What reviewed confirmation flow should apply AI-extracted company/contact
-  data without permitting autonomous CRM edits?
+- What reviewed confirmation flow should apply AI-extracted contact data
+  without permitting autonomous CRM edits?
 - Should overdue-task transitions become stored activities, or remain derived
   state until a reliable scheduler exists?
 - What retention policy should remove expired OAuth states and, if needed,

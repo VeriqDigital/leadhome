@@ -46,7 +46,10 @@ The feature adds `CONVERSATION_ANALYSIS` to the existing generic `Job` queue:
 7. Zod validates the parsed response and every evidence ordinal.
 8. A lease-fenced transaction replaces the one canonical current analysis and
    records one idempotent `AI_ANALYSIS_COMPLETED` activity.
-9. The Job stores only a bounded operational result.
+9. After successful persistence, the centralized database-only company
+   detector reevaluates the attached lead from stored evidence. This is
+   best-effort and does not enqueue another job or call the model again.
+10. The Job stores only a bounded operational result.
 
 The payload contains only:
 
@@ -152,6 +155,14 @@ Suggested action items do not create Tasks automatically. A user must open the
 editable task form, review or change its prefilled values, and explicitly save
 one task at a time.
 
+A structured company is also eligible for the separate Automatic Company
+Detection review flow only when its confidence is at least `0.7` and it cites
+at least one included message ordinal. That evidence is suggestion-only: it
+cannot automatically update `Lead.company`. If it conflicts with an otherwise
+automatic known-domain association, the automatic company write is suppressed
+and review is required. This downstream check uses the already persisted
+analysis and makes no additional OpenAI request.
+
 ## Completed analysis presentation
 
 The Inbox presents a completed analysis as a concise, expandable summary,
@@ -170,7 +181,9 @@ index into the owner-scoped task-prefill flow. Opening that form does not
 create a Task; the user must review the fields and explicitly save it. On save,
 the task service rereads the owned analysis and suggestion and records the
 validated AI provenance in the task-created activity. No completed-analysis
-presentation action mutates a Lead.
+presentation action mutates a Lead. A company can be applied only through the
+separate owner-scoped Inbox company-suggestion control, which rechecks the
+current attachment, blank company, and evidence fingerprint.
 
 Successful completion activity uses the analysis completion time, actor `AI`,
 source `AI`, and a job/analysis-derived idempotency key. It contains only safe
@@ -280,7 +293,7 @@ Conversation Intelligence V1 does not implement:
 - email sending or Gmail modification;
 - automatic lead creation or attachment;
 - automatic task creation;
-- automatic CRM-field mutation;
+- automatic CRM-field mutation from AI output;
 - deal-close probability or inferred deal value;
 - embeddings, vector search, or RAG;
 - attachment analysis, OCR, transcription, or voice;

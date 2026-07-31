@@ -56,6 +56,15 @@ button:not(:disabled):hover {
 .dark .inbox-shell a {
   border-color: rgba(255, 255, 255, 0.08);
 }
+.dark .inbox-shell .company-apply-button {
+  background: #f4f6fa;
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #17181c;
+}
+.dark .inbox-shell .company-apply-button:not(:disabled):hover {
+  background: #dfe3eb;
+  color: #111216;
+}
 .dark .inbox-filters {
   background: #1d1f24;
 }

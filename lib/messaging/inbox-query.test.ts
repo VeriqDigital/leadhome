@@ -29,6 +29,12 @@ describe("inbox queries", () => {
     expect(query.where.ownerId).toBe("owner-a");
     expect(query.take).toBe(INBOX_PAGE_SIZE + 1);
     expect(query.select.matchKind).toBe(true);
+    expect(query.select.lead.select).toEqual({
+      id: true,
+      name: true,
+      email: true,
+      company: true,
+    });
     expect(query.select.messages.take).toBe(1);
     expect(query.select.messages.select).not.toHaveProperty("bodyHtml");
     expect(result.items[0]).not.toHaveProperty("messages");
@@ -106,6 +112,7 @@ describe("inbox queries", () => {
     await expect(getConversationDetail("owner-a", "conversation-b")).resolves.toBeNull();
     const query = database.conversation.findFirst.mock.calls[0][0];
     expect(query.where).toEqual({ id: "conversation-b", ownerId: "owner-a" });
+    expect(query.select.lead.select.company).toBe(true);
     expect(query.select.messages.orderBy).toEqual([{ receivedAt: "asc" }, { id: "asc" }]);
   });
 });

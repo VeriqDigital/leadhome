@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const services = vi.hoisted(() => ({
@@ -13,6 +14,11 @@ const matching = vi.hoisted(() => ({
   dismissConversationLeadMatch: vi.fn(),
   reevaluateConversationLeadMatch: vi.fn(),
 }));
+const company = vi.hoisted(() => ({
+  applyConversationCompanySuggestion: vi.fn(),
+  dismissConversationCompanySuggestion: vi.fn(),
+  recheckConversationCompany: vi.fn(),
+}));
 const cache = vi.hoisted(() => ({
   revalidatePath: vi.fn(),
 }));
@@ -21,17 +27,26 @@ vi.mock("@/lib/auth-user", () => ({
 }));
 vi.mock("@/lib/messaging/conversation-control-service", () => services);
 vi.mock("@/lib/messaging/matching-service", () => matching);
+vi.mock(
+  "@/lib/messaging/company-detection-service",
+  () => company,
+);
 vi.mock("next/cache", () => cache);
 
 import {
   attachInboxAction,
   allowConversationMatchingAgainAction,
+  detachInboxAction,
   dismissConversationMatchAction,
   recheckConversationMatchesAction,
+  mutateConversationCompanyAction,
   statusInboxAction,
   saveInboxControlsAction,
 } from "./inbox-actions";
-import { initialInboxMutationState } from "@/app/inbox/mutation-state";
+import {
+  initialCompanyDetectionMutationState,
+  initialInboxMutationState,
+} from "@/app/inbox/mutation-state";
 
 const leadId = "cmrwxawgy0005j9kc6szawqx2";
 const canonical = {
@@ -55,9 +70,42 @@ const canonicalMatch = {
     "cmrwxawgy0006j9kc6szawqx3",
   ],
 } as const;
+const companyFingerprint = "a".repeat(64);
+const companyView = {
+  conversationId: canonical.id,
+  lead: {
+    id: leadId,
+    name: "Mick Enev",
+    email: "mick@northstarroofing.com",
+    company: null,
+  },
+  state: "SUGGESTED",
+  suggestion: {
+    value: "Northstar Roofing",
+    source: "BUSINESS_DOMAIN",
+    evidenceFingerprint: companyFingerprint,
+    evidenceSummary: "Detected from sender domain",
+    evidenceDetails: ["Email domain: northstarroofing.com"],
+    automaticEligible: false,
+  },
+  canRecheck: true,
+} as const;
 
 describe("Inbox server action contracts", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it("exports only async Server Functions from the use-server module", () => {
+    const source = readFileSync(
+      new URL("./inbox-actions.ts", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toMatch(/^"use server";/);
+    expect(source).not.toMatch(/^export\s+const\s+/m);
+    expect(source).not.toContain(
+      "export const initialCompanyDetectionMutationState",
+    );
+  });
 
   it("submits the newly selected value and returns canonical persistence", async () => {
     services.updateConversationStatus.mockResolvedValue({
@@ -123,6 +171,39 @@ describe("Inbox server action contracts", () => {
       changed: true,
       message: "Conversation attached to Mick Enev.",
     }));
+    for (const path of [
+      "/",
+      "/inbox",
+      "/leads",
+      "/pipeline",
+      `/leads/${leadId}`,
+    ]) {
+      expect(cache.revalidatePath).toHaveBeenCalledWith(path);
+    }
+    expect(cache.revalidatePath).toHaveBeenCalledWith(
+      "/leads/[id]",
+      "page",
+    );
+  });
+
+  it("invalidates the previously attached lead detail after detach", async () => {
+    services.detachConversationControl.mockResolvedValue({
+      changed: true,
+      conversation: canonical,
+    });
+    const data = new FormData();
+    data.set("conversationId", canonical.id);
+
+    await detachInboxAction(initialInboxMutationState, data);
+
+    expect(services.detachConversationControl).toHaveBeenCalledWith({
+      ownerId: "owner-a",
+      conversationId: canonical.id,
+    });
+    expect(cache.revalidatePath).toHaveBeenCalledWith(
+      "/leads/[id]",
+      "page",
+    );
   });
 
   it("submits one canonical combined control contract", async () => {
@@ -373,6 +454,200 @@ describe("Inbox server action contracts", () => {
       changed: false,
       message: "Conversation is already attached.",
     }));
-    expect(cache.revalidatePath).toHaveBeenCalledWith(`/leads/${leadId}`);
+    for (const path of [
+      "/",
+      "/inbox",
+      "/leads",
+      "/pipeline",
+      `/leads/${leadId}`,
+    ]) {
+      expect(cache.revalidatePath).toHaveBeenCalledWith(path);
+    }
+  });
+
+  it("owner-scopes company application and revalidates every affected view", async () => {
+    company.applyConversationCompanySuggestion.mockResolvedValue({
+      changed: true,
+      outcome: "APPLIED",
+      companyView: {
+        ...companyView,
+        state: "COMPANY_PRESENT",
+        lead: { ...companyView.lead, company: "Northstar Roofing" },
+        suggestion: null,
+        canRecheck: false,
+      },
+    });
+    const data = new FormData();
+    data.set("intent", "APPLY");
+    data.set("conversationId", canonical.id);
+    data.set("expectedLeadId", leadId);
+    data.set("evidenceFingerprint", companyFingerprint);
+
+    const result = await mutateConversationCompanyAction(
+      initialCompanyDetectionMutationState,
+      data,
+    );
+
+    expect(
+      company.applyConversationCompanySuggestion,
+    ).toHaveBeenCalledWith({
+      ownerId: "owner-a",
+      conversationId: canonical.id,
+      expectedLeadId: leadId,
+      evidenceFingerprint: companyFingerprint,
+    });
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      changed: true,
+      message: "Company applied.",
+    }));
+    for (const path of [
+      "/inbox",
+      "/",
+      "/leads",
+      "/pipeline",
+      `/leads/${leadId}`,
+    ]) {
+      expect(cache.revalidatePath).toHaveBeenCalledWith(path);
+    }
+  });
+
+  it("owner-scopes company dismissal without revalidating unrelated lead views", async () => {
+    company.dismissConversationCompanySuggestion.mockResolvedValue({
+      changed: true,
+      outcome: "DISMISSED",
+      companyView: {
+        ...companyView,
+        state: "NO_SUGGESTION",
+        suggestion: null,
+      },
+    });
+    const data = new FormData();
+    data.set("intent", "DISMISS");
+    data.set("conversationId", canonical.id);
+    data.set("expectedLeadId", leadId);
+    data.set("evidenceFingerprint", companyFingerprint);
+
+    const result = await mutateConversationCompanyAction(
+      initialCompanyDetectionMutationState,
+      data,
+    );
+
+    expect(
+      company.dismissConversationCompanySuggestion,
+    ).toHaveBeenCalledWith({
+      ownerId: "owner-a",
+      conversationId: canonical.id,
+      expectedLeadId: leadId,
+      evidenceFingerprint: companyFingerprint,
+    });
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      changed: true,
+      message: "Company suggestion dismissed.",
+    }));
+    expect(cache.revalidatePath).toHaveBeenCalledWith("/inbox");
+    expect(cache.revalidatePath).not.toHaveBeenCalledWith("/leads");
+  });
+
+  it("owner-scopes company recheck and returns the canonical suggestion", async () => {
+    company.recheckConversationCompany.mockResolvedValue({
+      changed: false,
+      outcome: "NO_CHANGE",
+      companyView,
+    });
+    const data = new FormData();
+    data.set("intent", "RECHECK");
+    data.set("conversationId", canonical.id);
+
+    const result = await mutateConversationCompanyAction(
+      initialCompanyDetectionMutationState,
+      data,
+    );
+
+    expect(company.recheckConversationCompany).toHaveBeenCalledWith(
+      "owner-a",
+      canonical.id,
+    );
+    expect(result).toEqual({
+      success: true,
+      changed: false,
+      message: "Company evidence checked. A suggestion is ready for review.",
+      companyView,
+    });
+  });
+
+  it("rejects malformed company mutations before invoking a service", async () => {
+    const data = new FormData();
+    data.set("intent", "APPLY");
+    data.set("conversationId", canonical.id);
+    data.set("expectedLeadId", leadId);
+    data.set("evidenceFingerprint", "not-a-fingerprint");
+
+    await expect(
+      mutateConversationCompanyAction(
+        initialCompanyDetectionMutationState,
+        data,
+      ),
+    ).resolves.toEqual({
+      success: false,
+      message: "That company suggestion is no longer available.",
+    });
+    expect(
+      company.applyConversationCompanySuggestion,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("returns canonical state when a stale apply loses to a newer edit", async () => {
+    const populated = {
+      ...companyView,
+      state: "COMPANY_PRESENT" as const,
+      lead: { ...companyView.lead, company: "Manual Company" },
+      suggestion: null,
+      canRecheck: false,
+    };
+    company.applyConversationCompanySuggestion.mockResolvedValue({
+      changed: false,
+      outcome: "STALE",
+      companyView: populated,
+    });
+    const data = new FormData();
+    data.set("intent", "APPLY");
+    data.set("conversationId", canonical.id);
+    data.set("expectedLeadId", leadId);
+    data.set("evidenceFingerprint", companyFingerprint);
+
+    const result = await mutateConversationCompanyAction(
+      initialCompanyDetectionMutationState,
+      data,
+    );
+
+    expect(result).toEqual({
+      success: false,
+      changed: false,
+      message:
+        "The lead or company changed before this request was completed.",
+      companyView: populated,
+    });
+    expect(cache.revalidatePath).toHaveBeenCalledWith("/inbox");
+  });
+
+  it("does not expose owner-scoped company service failures", async () => {
+    company.recheckConversationCompany.mockRejectedValue(
+      new Error("Conversation not found."),
+    );
+    const data = new FormData();
+    data.set("intent", "RECHECK");
+    data.set("conversationId", canonical.id);
+
+    await expect(
+      mutateConversationCompanyAction(
+        initialCompanyDetectionMutationState,
+        data,
+      ),
+    ).resolves.toEqual({
+      success: false,
+      message: "Company detection could not be updated. Please try again.",
+    });
   });
 });

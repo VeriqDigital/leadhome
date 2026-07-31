@@ -22,6 +22,9 @@ const mocks = vi.hoisted(() => {
     transaction: vi.fn(),
     recordActivity: vi.fn(),
     enqueueAnalysis: vi.fn(),
+    enqueueCompanyDetection: vi.fn(),
+    detectCompany: vi.fn(),
+    logJobEvent: vi.fn(),
     tx,
   };
 });
@@ -40,6 +43,15 @@ vi.mock("@/lib/activity-service", () => ({
 }));
 vi.mock("@/lib/ai/conversation-analysis/job-service", () => ({
   enqueueConversationAnalysisAfterLeadLink: mocks.enqueueAnalysis,
+}));
+vi.mock("./company-detection-service", () => ({
+  detectCompanyAfterAttachment: mocks.detectCompany,
+}));
+vi.mock("./company-detection-job-service", () => ({
+  enqueueCompanyDetectionJob: mocks.enqueueCompanyDetection,
+}));
+vi.mock("@/lib/jobs/logging", () => ({
+  logJobEvent: mocks.logJobEvent,
 }));
 
 import {
@@ -147,6 +159,11 @@ beforeEach(() => {
   mockEvidenceRows({});
   mocks.findConversation.mockResolvedValue(null);
   mocks.findDismissals.mockResolvedValue([]);
+  mocks.detectCompany.mockResolvedValue(null);
+  mocks.enqueueCompanyDetection.mockResolvedValue({
+    kind: "queued",
+    job: { id: "company-job-a" },
+  });
   mocks.transaction.mockImplementation(async (callback) => callback(mocks.tx));
   mocks.tx.conversation.findFirst.mockResolvedValue(null);
   mocks.tx.conversation.updateMany.mockResolvedValue({ count: 1 });
@@ -186,6 +203,27 @@ describe("Smart Lead Matching", () => {
       reason: "Exact sender email",
     });
     expect(result.evidenceFingerprint).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("preserves exact-email matching for system-style participant addresses", async () => {
+    const leadRow = lead(
+      "lead-system",
+      "Vendor Notifications",
+      "no-reply@vendor.com",
+    );
+    mockEvidenceRows({ emails: [leadRow], names: [leadRow] });
+
+    await expect(findMatch({
+      messages: [
+        inbound("Vendor Notifications <no-reply@vendor.com>"),
+      ],
+    })).resolves.toMatchObject({
+      kind: "MATCHED",
+      automaticMatch: {
+        leadId: "lead-system",
+        reasonCodes: expect.arrayContaining(["EXACT_SENDER_EMAIL"]),
+      },
+    });
   });
 
   it("suggests a unique website-submission match without auto-attaching it", async () => {
@@ -563,6 +601,106 @@ describe("Smart Lead Matching", () => {
     expect(mocks.tx.lead.findFirst).not.toHaveBeenCalled();
     expect(mocks.recordActivity).not.toHaveBeenCalled();
     expect(mocks.enqueueAnalysis).not.toHaveBeenCalled();
+  });
+
+  it("queues company detection for Gmail automatic attachment without running it inline", async () => {
+    const jane = lead("lead-a", "Jane Doe", "jane@example.com");
+    mockEvidenceRows({ emails: [jane], names: [jane] });
+    const match = await findMatch({
+      messages: [inbound("Jane Doe <jane@example.com>")],
+    });
+    if (match.kind !== "MATCHED") throw new Error("Expected a match");
+    mocks.tx.conversation.findFirst.mockResolvedValueOnce({
+      id: "conversation-a",
+      leadId: null,
+      subject: "Exact match",
+      provider: "GMAIL",
+      reviewState: "NEEDS_REVIEW",
+      manuallyDetached: false,
+      matchKind: null,
+      matchReason: null,
+      matchCandidateLeadIds: null,
+    });
+    mocks.tx.lead.findFirst.mockResolvedValueOnce({ id: "lead-a" });
+
+    await expect(applyConversationLeadMatch({
+      ownerId: "owner-a",
+      conversationId: "conversation-a",
+      match: {
+        ...match,
+        automaticMatch: {
+          ...match.automaticMatch,
+          leadId: "lead-a",
+        },
+      },
+      companyDetectionMode: "ENQUEUE_GMAIL_IMPORT",
+    })).resolves.toMatchObject({
+      attached: true,
+      matched: true,
+    });
+
+    expect(mocks.enqueueCompanyDetection).toHaveBeenCalledWith({
+      ownerId: "owner-a",
+      conversationId: "conversation-a",
+    });
+    expect(mocks.detectCompany).not.toHaveBeenCalled();
+    expect(mocks.enqueueAnalysis).toHaveBeenCalledWith(
+      "owner-a",
+      "conversation-a",
+    );
+    expect(mocks.logJobEvent).toHaveBeenCalledWith(
+      "company_detection_queued",
+      expect.objectContaining({
+        jobId: "company-job-a",
+        queued: 1,
+        reused: 0,
+        failed: 0,
+      }),
+    );
+  });
+
+  it("keeps Gmail matching successful when company detection cannot be queued", async () => {
+    const jane = lead("lead-a", "Jane Doe", "jane@example.com");
+    mockEvidenceRows({ emails: [jane], names: [jane] });
+    const match = await findMatch({
+      messages: [inbound("Jane Doe <jane@example.com>")],
+    });
+    if (match.kind !== "MATCHED") throw new Error("Expected a match");
+    mocks.tx.conversation.findFirst.mockResolvedValueOnce({
+      id: "conversation-a",
+      leadId: null,
+      subject: "Exact match",
+      provider: "GMAIL",
+      reviewState: "NEEDS_REVIEW",
+      manuallyDetached: false,
+      matchKind: null,
+      matchReason: null,
+      matchCandidateLeadIds: null,
+    });
+    mocks.tx.lead.findFirst.mockResolvedValueOnce({ id: "lead-a" });
+    mocks.enqueueCompanyDetection.mockRejectedValueOnce(
+      new Error("simulated queue outage"),
+    );
+
+    await expect(applyConversationLeadMatch({
+      ownerId: "owner-a",
+      conversationId: "conversation-a",
+      match,
+      companyDetectionMode: "ENQUEUE_GMAIL_IMPORT",
+    })).resolves.toMatchObject({
+      attached: true,
+      matched: true,
+    });
+
+    expect(mocks.detectCompany).not.toHaveBeenCalled();
+    expect(mocks.enqueueAnalysis).toHaveBeenCalledOnce();
+    expect(mocks.logJobEvent).toHaveBeenCalledWith(
+      "company_detection_enqueue_failed",
+      expect.objectContaining({
+        ownerId: "owner-a",
+        failed: 1,
+      }),
+    );
   });
 
   it("calculates and dismisses suggestions without creating activity", async () => {
@@ -975,6 +1113,7 @@ describe("Smart Lead Matching", () => {
       }),
     );
     expect(mocks.enqueueAnalysis).toHaveBeenCalledOnce();
+    expect(mocks.detectCompany).toHaveBeenCalledOnce();
   });
 
   it("cannot clear suppression after a concurrent attachment wins", async () => {
@@ -1013,6 +1152,7 @@ describe("Smart Lead Matching", () => {
     expect(mocks.findLeads).not.toHaveBeenCalled();
     expect(mocks.recordActivity).not.toHaveBeenCalled();
     expect(mocks.enqueueAnalysis).not.toHaveBeenCalled();
+    expect(mocks.detectCompany).not.toHaveBeenCalled();
   });
 
   it("ignores the account mailbox and outbound-only traffic", async () => {

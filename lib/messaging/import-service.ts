@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import {
   applyConversationLeadMatch,
   findLeadForConversation,
+  type ConversationCompanyDetectionMode,
 } from "./matching-service";
 import type {
   MessageProvider,
@@ -40,6 +41,7 @@ export type ImportOptions = {
     messagesCreated: number;
   }) => Promise<void> | void;
   persistAccountSummary?: boolean;
+  companyDetectionMode?: ConversationCompanyDetectionMode;
 };
 
 const emptySummary = (): ImportSummary => ({
@@ -164,6 +166,8 @@ export async function importProviderAccount({
       messages: item.messages,
       rawMessageCount: item.rawMessageCount,
       summary,
+      companyDetectionMode:
+        options?.companyDetectionMode ?? "INLINE",
     });
     if (change.messagesCreated > 0) {
       await options?.onConversationChanged?.(change);
@@ -202,6 +206,7 @@ async function importConversation({
   messages,
   rawMessageCount,
   summary,
+  companyDetectionMode,
 }: {
   ownerId: string;
   account: { id: string; address: string | null };
@@ -210,6 +215,7 @@ async function importConversation({
   messages: NormalizedMessage[];
   rawMessageCount: number;
   summary: ImportSummary;
+  companyDetectionMode: ConversationCompanyDetectionMode;
 }) {
   const existing = await prisma.conversation.findUnique({
     where: {
@@ -390,6 +396,7 @@ async function importConversation({
     ownerId,
     conversationId: imported.conversation.id,
     match,
+    companyDetectionMode,
   });
   if (applied.matched) summary.conversationsMatched++;
   else if (applied.needsReview) summary.conversationsNeedingReview++;

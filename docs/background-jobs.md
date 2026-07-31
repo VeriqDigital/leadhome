@@ -1,9 +1,10 @@
 # Background jobs
 
-LeadHome uses a deliberately small PostgreSQL-backed job queue. Gmail sync and
-Conversation Intelligence use the same queue, claim, lease, retry,
-cancellation, and retention machinery. It is not a workflow engine and does
-not execute arbitrary user-supplied code or payloads.
+LeadHome uses a deliberately small PostgreSQL-backed job queue. Gmail sync,
+Conversation Intelligence, and import-triggered Automatic Company Detection
+use the same queue, claim, lease, retry, cancellation, and retention
+machinery. It is not a workflow engine and does not execute arbitrary
+user-supplied code or payloads.
 
 Conversation Intelligence architecture, privacy boundaries, eligibility,
 hashing, structured output, and provider configuration are documented in
@@ -29,6 +30,22 @@ hashing, structured output, and provider configuration are documented in
 The Gmail handler does not duplicate Gmail normalization, conversation
 upserts, message deduplication, lead matching, review behavior, or import
 summary calculation.
+
+If Gmail matching automatically attaches a conversation, the importer queues
+one active `COMPANY_DETECTION` job rather than waiting for nonessential company
+inference. The small typed payload contains only the conversation ID and
+`GMAIL_IMPORT` trigger. Its handler reuses the centralized owner-scoped
+database detector, performs no provider or model request, and treats a
+detachment, reassignment, populated company, or changed evidence as canonical
+current state rather than trusting the enqueue-time snapshot. Active
+owner/type/conversation idempotency prevents duplicate queued work.
+
+Company-detection progress is limited to `QUEUED`, `DETECTING`, and
+`COMPLETED`. Its bounded result stores the conversation ID, whether a write
+occurred, the canonical outcome/state, the affected lead ID when present, and
+duration. It deliberately omits candidate/company text, evidence, message
+content, and credentials. Unexpected database failures use the queue's normal
+bounded retry policy; malformed payloads fail permanently.
 
 The importer, not the queue, records business activity. A first conversation
 import, later messages on attached conversations, and automatic lead links use

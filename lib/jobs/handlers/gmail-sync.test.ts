@@ -151,6 +151,7 @@ describe("Gmail sync job handler", () => {
     expect(mocks.importAccount).toHaveBeenCalledWith(expect.objectContaining({
       ownerId: "owner-a",
       options: expect.objectContaining({
+        companyDetectionMode: "ENQUEUE_GMAIL_IMPORT",
         onProgress: expect.any(Function),
         persistAccountSummary: false,
       }),
@@ -170,6 +171,13 @@ describe("Gmail sync job handler", () => {
     });
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/inbox");
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/settings");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/leads");
+    expect(mocks.revalidatePath).toHaveBeenCalledWith(
+      "/leads/[id]",
+      "page",
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/pipeline");
   });
 
   it("queues separate analysis jobs for changed conversations without changing the Gmail result", async () => {

@@ -66,6 +66,48 @@ Candidate calculation, display, reordering, dismissal, and no-match results do
 not create activity; confirmed automatic and user-approved attachments
 continue through the existing attachment and activity services.
 
+Automatic Company Detection begins only after a conversation is attached to
+an owned lead. It is separate from Smart Lead Matching and does not affect
+which lead is selected. `Lead.company` remains the only company
+representation; there is no `Company` entity or parallel persisted company
+result. One centralized, database-only service runs after the four existing
+attachment service paths and after a completed Conversation Intelligence
+analysis. It does not add another model call. Interactive and Fake-provider
+attachments evaluate immediately; a Gmail-imported automatic attachment
+enqueues one idempotent `COMPANY_DETECTION` job on the existing queue. The
+queued handler rechecks canonical ownership, attachment, evidence, and company
+state, so it cannot overwrite a later manual decision and does not extend the
+Gmail import.
+
+Automatic application is intentionally narrow. The attached lead must still
+belong to the owner and have a blank company, and the conversation must have a
+credible external inbound identity that resolves to exactly one recognized
+business domain. Other owned leads on that domain must map to exactly one
+normalized nonblank company without exceeding the bounded association query.
+A conflict with a structured AI company suggestion, a current dismissal,
+attachment change, company edit, ambiguous domain, or conflicting association
+prevents the automatic write.
+
+Public mailbox, disposable, relay, malformed, system-only, connected-mailbox,
+and outbound identities are excluded. Recipient-only addresses unrelated to
+the inbound sender/reply-to identity are not evidence. Subdomains are reduced
+only through a conservative explicit suffix utility that fails closed for
+unknown suffix shapes and known shared tenant roots. All bounded stored
+mailbox addresses for the owner are excluded; detection fails closed if that
+owner-mailbox lookup overflows.
+
+Two weaker sources remain review-only: a formatted business-domain label and a
+structured AI company with at least `0.7` confidence and cited message
+evidence. The owner-scoped suggestion panel uses canonical server state and
+supports **Apply company**, **Dismiss**, evidence inspection, and
+**Recheck company** with disabled pending controls. Dismissals are scoped to
+the current owner, conversation, attached lead, candidate source, and evidence
+fingerprint, so unchanged evidence stays suppressed while materially changed
+evidence may be reconsidered. Apply, dismiss, and recheck re-read current
+attachment and company state; stale or repeated requests cannot overwrite a
+manual edit or create duplicate activity. Only an actual `Lead.company`
+change emits the existing `COMPANY_CHANGED` event.
+
 In development, bounded query timing and row/message counts are logged on the
 server. `/dev/messages` remains unavailable in production and now shows only
 the newest 20 diagnostic summaries.

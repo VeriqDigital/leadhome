@@ -11,10 +11,14 @@ const state = vi.hoisted(() => ({
   }>(),
   activities: 0,
   activityRows: [] as Record<string, unknown>[],
+  leadCompanies: new Map<string, string | null>(),
 }));
 
 const analysis = vi.hoisted(() => ({
   enqueue: vi.fn(),
+}));
+const company = vi.hoisted(() => ({
+  detect: vi.fn(),
 }));
 
 const database = vi.hoisted(() => ({
@@ -24,7 +28,14 @@ const database = vi.hoisted(() => ({
       if (!row || row.ownerId !== where.ownerId) return null;
       return {
         ...row,
-        lead: row.leadId ? { id: row.leadId, name: `Lead ${row.leadId}`, email: null } : null,
+        lead: row.leadId
+          ? {
+              id: row.leadId,
+              name: `Lead ${row.leadId}`,
+              email: null,
+              company: state.leadCompanies.get(row.leadId) ?? null,
+            }
+          : null,
       };
     }),
     findMany: vi.fn(async ({ where }: {
@@ -81,6 +92,9 @@ vi.mock("@/lib/prisma", () => ({ prisma: database }));
 vi.mock("@/lib/ai/conversation-analysis/job-service", () => ({
   enqueueConversationAnalysisAfterLeadLink: analysis.enqueue,
 }));
+vi.mock("./company-detection-service", () => ({
+  detectCompanyAfterAttachment: company.detect,
+}));
 vi.mock("./conversation-service", () => ({
   attachConversationToLead: vi.fn(async ({ ownerId, conversationId, leadId }) => {
     const row = state.conversations.get(conversationId);
@@ -112,7 +126,9 @@ describe("canonical conversation control mutations", () => {
     vi.clearAllMocks();
     state.activities = 0;
     state.activityRows.length = 0;
+    state.leadCompanies.clear();
     analysis.enqueue.mockResolvedValue(undefined);
+    company.detect.mockResolvedValue(null);
     state.conversations.clear();
     for (const id of ["conversation-a", "conversation-b"]) {
       state.conversations.set(id, {
@@ -293,6 +309,11 @@ describe("canonical conversation control mutations", () => {
       "owner-a",
       "conversation-b",
     );
+    expect(company.detect).toHaveBeenCalledOnce();
+    expect(company.detect).toHaveBeenCalledWith(
+      "owner-a",
+      "conversation-b",
+    );
     expect(database.lead.update.mock.invocationCallOrder[0]).toBeLessThan(
       analysis.enqueue.mock.invocationCallOrder[0],
     );
@@ -310,6 +331,28 @@ describe("canonical conversation control mutations", () => {
     expect(result.changed).toBe(false);
     expect(database.conversation.updateMany).not.toHaveBeenCalled();
     expect(analysis.enqueue).not.toHaveBeenCalled();
+    expect(company.detect).not.toHaveBeenCalled();
+  });
+
+  it("returns the canonical company populated after a combined attachment", async () => {
+    company.detect.mockImplementationOnce(async () => {
+      state.leadCompanies.set("lead-b", "Northstar Roofing");
+      return null;
+    });
+
+    const result = await updateConversationControls({
+      ownerId: "owner-a",
+      conversationId: "conversation-b",
+      leadId: "lead-b",
+      classification: "UNKNOWN",
+      reviewState: "NEEDS_REVIEW",
+      status: "OPEN",
+    });
+
+    expect(result.conversation.lead).toEqual(expect.objectContaining({
+      id: "lead-b",
+      company: "Northstar Roofing",
+    }));
   });
 
   it("does not enqueue analysis when a combined save detaches a lead", async () => {
@@ -342,5 +385,6 @@ describe("canonical conversation control mutations", () => {
       },
     });
     expect(analysis.enqueue).not.toHaveBeenCalled();
+    expect(company.detect).not.toHaveBeenCalled();
   });
 });

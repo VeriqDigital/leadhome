@@ -21,6 +21,14 @@ import { TaskDue } from "@/app/tasks/task-due";
 import { GmailConnectLink } from "@/app/gmail-connect-link";
 import { LeadMatchSuggestions } from "./lead-match-suggestions";
 import { conversationMatchPresentation } from "./match-presentation";
+import {
+  getConversationCompanyView,
+} from "@/lib/messaging/company-detection-service";
+import { CompanySuggestion } from "./company-suggestion";
+import {
+  canonicalCompanyLead,
+  companyPresentation,
+} from "./company-presentation";
 
 const reviews = ["NEEDS_REVIEW", "MATCHED", "IGNORED", "RESOLVED"] as const;
 const classifications = ["UNKNOWN", "LEAD", "CUSTOMER", "NEWSLETTER", "SPAM", "INTERNAL", "SYSTEM"] as const;
@@ -61,7 +69,15 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
     page: Number.isSafeInteger(pageValue) && pageValue > 0 ? Math.min(pageValue, 10000) : 1,
   };
   const selectedId = one(params.conversation);
-  const [list, detail, leads, gmail, intelligence, leadMatch] = await Promise.all([
+  const [
+    list,
+    detail,
+    leads,
+    gmail,
+    intelligence,
+    leadMatch,
+    companyView,
+  ] = await Promise.all([
     listConversationSummaries(user.id, filters),
     selectedId ? getConversationDetail(user.id, selectedId) : null,
     selectedId ? prisma.lead.findMany({
@@ -77,6 +93,9 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
       : Promise.resolve(null),
     selectedId
       ? evaluateStoredConversationMatch(user.id, selectedId)
+      : Promise.resolve(null),
+    selectedId
+      ? getConversationCompanyView(user.id, selectedId)
       : Promise.resolve(null),
   ]);
   const hasFilters = Boolean(filters.query || filters.reviewState || filters.classification || filters.status || filters.provider || filters.attachment);
@@ -120,8 +139,14 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
         </form>
         <div>
           {list.items.map((conversation) => {
+            const selectedCompanyView =
+              selectedId === conversation.id ? companyView : null;
+            const attachedLead = canonicalCompanyLead(
+              selectedCompanyView,
+              conversation.lead,
+            );
             const presentation = conversationMatchPresentation({
-              leadId: conversation.lead?.id ?? null,
+              leadId: attachedLead?.id ?? null,
               manuallyDetached:
                 selectedId === conversation.id
                   ? detail?.manuallyDetached ?? false
@@ -131,6 +156,10 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
               evaluatedMatch:
                 selectedId === conversation.id ? leadMatch : null,
             });
+            const company = companyPresentation(
+              selectedCompanyView,
+              attachedLead?.company,
+            );
             return <Link
               key={conversation.id} href={href(params, { conversation: conversation.id })}
               aria-current={selectedId === conversation.id ? "true" : undefined}
@@ -145,7 +174,8 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
               <p className="mt-1 truncate text-xs font-medium text-[#565d69]">{conversation.latestMessage?.sender ?? "No participant"}</p>
               <p className="mt-1 line-clamp-2 text-xs leading-5 text-[#777e89]">{conversation.latestMessage?.bodyPreview ?? "No message preview"}</p>
               <div className="mt-2 flex flex-wrap gap-1.5 text-[10px]"><Badge text={label(conversation.provider)}/><Badge text={label(conversation.classification)}/><Badge text={label(conversation.reviewState)}/>
-                {conversation.lead && <Badge text={conversation.lead.name}/>}
+                {attachedLead && <Badge text={attachedLead.name}/>}
+                {company.rowBadge && <Badge text={company.rowBadge}/>}
                 {presentation.badge && <Badge text={presentation.badge}/>}</div>
             </Link>;
           })}
@@ -160,7 +190,7 @@ export default async function InboxPage({ searchParams }: { searchParams: Promis
 
       <section aria-label="Conversation detail" className={`${selectedId ? "block" : "hidden lg:block"} min-w-0`}>
         {selectedId && !detail ? <div className="grid min-h-[500px] place-items-center p-8 text-center"><div><p className="font-semibold">Conversation not found</p><p className="mt-2 text-sm text-[#687080]">It may have been removed or is not accessible.</p><Link href={href(params, { conversation: undefined })} className="mt-4 inline-block underline">Back to inbox</Link></div></div>
-          : detail ? <ConversationDetail key={detail.id} detail={detail} leads={leads} backHref={href(params, { conversation: undefined })} intelligence={intelligence} leadMatch={leadMatch}/>
+          : detail ? <ConversationDetail key={detail.id} detail={detail} leads={leads} backHref={href(params, { conversation: undefined })} intelligence={intelligence} leadMatch={leadMatch} companyView={companyView}/>
           : <div className="grid min-h-[500px] place-items-center p-8 text-center text-sm text-[#687080]">Select a conversation to review its messages.</div>}
       </section>
     </div>
@@ -178,30 +208,44 @@ function ConversationDetail({
   backHref,
   intelligence,
   leadMatch,
+  companyView,
 }: {
   detail: Awaited<ReturnType<typeof getConversationDetail>> & {};
   leads: { id: string; name: string; email: string | null }[];
   backHref: string;
   intelligence: Awaited<ReturnType<typeof getConversationIntelligenceView>>;
   leadMatch: Awaited<ReturnType<typeof evaluateStoredConversationMatch>>;
+  companyView: Awaited<ReturnType<typeof getConversationCompanyView>> | null;
 }) {
   const recipients = [...new Set(detail.messages.flatMap((message) => Array.isArray(message.recipients) ? message.recipients.filter((item): item is string => typeof item === "string") : []))];
+  const attachedLead = canonicalCompanyLead(companyView, detail.lead);
   const matchPresentation = conversationMatchPresentation({
-    leadId: detail.lead?.id ?? null,
+    leadId: attachedLead?.id ?? null,
     manuallyDetached: detail.manuallyDetached,
     persistedKind: detail.matchKind,
     persistedReason: detail.matchReason,
     evaluatedMatch: leadMatch,
   });
+  const company = companyPresentation(
+    companyView,
+    attachedLead?.company,
+  );
   return <div>
     <header className="inbox-detail-header border-b border-black/[0.07] p-5 sm:p-6"><Link href={backHref} className="mb-4 inline-block text-sm font-semibold underline lg:hidden">← Back to inbox</Link>
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-semibold">{detail.subject ?? "No subject"}</h2><p className="mt-1 text-sm text-[#687080]">{label(detail.provider)} · {detail.account.address ?? detail.account.displayName}</p></div>
         <div className="flex flex-wrap gap-1.5 text-xs"><Badge text={label(detail.status)}/><Badge text={label(detail.classification)}/><Badge text={label(detail.reviewState)}/></div></div>
       <p className="mt-3 text-xs text-[#687080]">Participants: {recipients.join(", ") || detail.messages.map((message) => message.sender).filter((value, index, all) => all.indexOf(value) === index).join(", ") || "Unknown"}</p>
-      <div className="inbox-match mt-4 rounded-xl bg-[#f7f7f5] p-3 text-sm"><p><span className="font-semibold">Attached lead:</span> {detail.lead?.name ?? "None"}</p>
+      <div className="inbox-match mt-4 rounded-xl bg-[#f7f7f5] p-3 text-sm"><p><span className="font-semibold">Lead name:</span> {attachedLead?.name ?? "None"}</p>
+        <p className="mt-1"><span className="font-semibold">Company name:</span> {company.attachedCompany ?? "Not set"}</p>
         <p className="mt-1 text-[#687080]"><span className="font-semibold text-[#343840]">Match:</span> {matchPresentation.summary}</p>
       </div>
-      {!detail.lead && (
+      {companyView && (
+        <CompanySuggestion
+          key={`${companyView.state}:${companyView.lead?.id ?? "none"}:${companyView.lead?.company ?? "none"}:${companyView.suggestion?.evidenceFingerprint ?? "none"}`}
+          initialView={companyView}
+        />
+      )}
+      {!attachedLead && (
         <LeadMatchSuggestions
           conversationId={detail.id}
           match={leadMatch}
@@ -212,9 +256,9 @@ function ConversationDetail({
         />
       )}
       <ConversationControls
-        key={`${detail.id}:${detail.lead?.id ?? "none"}:${detail.classification}:${detail.reviewState}:${detail.status}`}
+        key={`${detail.id}:${attachedLead?.id ?? "none"}:${detail.classification}:${detail.reviewState}:${detail.status}`}
         conversationId={detail.id}
-        leadId={detail.lead?.id ?? null}
+        leadId={attachedLead?.id ?? null}
         leads={leads}
         classification={detail.classification}
         reviewState={detail.reviewState}
@@ -231,7 +275,7 @@ function ConversationDetail({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h3 className="text-sm font-semibold">Open tasks</h3>
           <div className="flex gap-3 text-xs font-semibold">
-            {!detail.lead && (
+            {!attachedLead && (
               <Link
                 href={`/inbox/${detail.id}/create-lead`}
                 className="underline"
@@ -240,7 +284,7 @@ function ConversationDetail({
               </Link>
             )}
             <Link
-              href={`/tasks/new?conversation=${detail.id}&lead=${detail.lead?.id ?? ""}&type=FOLLOW_UP&title=${encodeURIComponent(`Follow up: ${detail.subject ?? "No subject"}`)}`}
+              href={`/tasks/new?conversation=${detail.id}&lead=${attachedLead?.id ?? ""}&type=FOLLOW_UP&title=${encodeURIComponent(`Follow up: ${detail.subject ?? "No subject"}`)}`}
               className="underline"
             >
               Create task

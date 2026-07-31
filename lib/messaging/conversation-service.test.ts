@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   activityCreateMany: vi.fn(),
   transaction: vi.fn(),
   analysisEnqueue: vi.fn(),
+  detectCompany: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -33,6 +34,9 @@ vi.mock("@/lib/prisma", () => ({
 }));
 vi.mock("@/lib/ai/conversation-analysis/job-service", () => ({
   enqueueConversationAnalysisAfterLeadLink: mocks.analysisEnqueue,
+}));
+vi.mock("./company-detection-service", () => ({
+  detectCompanyAfterAttachment: mocks.detectCompany,
 }));
 
 import {
@@ -71,6 +75,7 @@ beforeEach(() => {
     Promise.resolve({ count: data.length }),
   );
   mocks.analysisEnqueue.mockResolvedValue(undefined);
+  mocks.detectCompany.mockResolvedValue(null);
   mocks.transaction.mockImplementation((operation) =>
     operation({
       conversation: {
@@ -265,6 +270,8 @@ describe("conversation service", () => {
     });
     expect(mocks.analysisEnqueue).toHaveBeenCalledTimes(1);
     expect(mocks.analysisEnqueue).toHaveBeenCalledWith(ownerId, conversationId);
+    expect(mocks.detectCompany).toHaveBeenCalledOnce();
+    expect(mocks.detectCompany).toHaveBeenCalledWith(ownerId, conversationId);
     expect(mocks.leadUpdate.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.analysisEnqueue.mock.invocationCallOrder[0],
     );
@@ -302,6 +309,7 @@ describe("conversation service", () => {
       skipDuplicates: false,
     });
     expect(mocks.analysisEnqueue).not.toHaveBeenCalled();
+    expect(mocks.detectCompany).not.toHaveBeenCalled();
   });
 
   it("does not enqueue analysis when lead attachment fails", async () => {
@@ -312,6 +320,7 @@ describe("conversation service", () => {
     ).rejects.toThrow("Conversation or lead not found");
 
     expect(mocks.analysisEnqueue).not.toHaveBeenCalled();
+    expect(mocks.detectCompany).not.toHaveBeenCalled();
   });
 
   it("scopes provider ID lookups through message and conversation ownership", async () => {

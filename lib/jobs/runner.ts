@@ -9,6 +9,7 @@ import {
 } from "./errors";
 import { runGmailSyncJob } from "./handlers/gmail-sync";
 import { runConversationAnalysisJob } from "./handlers/conversation-analysis";
+import { runCompanyDetectionJob } from "./handlers/company-detection";
 import {
   reconcileConversationAnalysisAfterCompletion,
   reconcileConversationAnalysisAfterTerminalFailure,
@@ -49,6 +50,8 @@ async function dispatchJob(
       return runGmailSyncJob(job, { workerId, deadlineAt });
     case JobType.CONVERSATION_ANALYSIS:
       return runConversationAnalysisJob(job, { workerId, deadlineAt });
+    case JobType.COMPANY_DETECTION:
+      return runCompanyDetectionJob(job, { workerId, deadlineAt });
   }
 }
 

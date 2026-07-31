@@ -13,6 +13,7 @@ import {
   enqueueConversationAnalysisAfterLeadLink,
 } from "@/lib/ai/conversation-analysis/job-service";
 import { recordActivity } from "@/lib/activity-service";
+import { detectCompanyAfterAttachment } from "./company-detection-service";
 
 export type ConversationLeadPrefill = {
   name: string;
@@ -227,6 +228,7 @@ export async function createLeadFromConversation({
     await attach(tx, ownerId, conversation, created.id);
     return { leadId: created.id, created: true };
   });
+  await detectCompanyAfterAttachment(ownerId, conversationId);
   await enqueueConversationAnalysisAfterLeadLink(ownerId, conversationId);
   return result;
 }

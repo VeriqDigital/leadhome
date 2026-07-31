@@ -58,7 +58,12 @@ export async function importFakeMessagesAction(
       ownerId: user.id,
       provider: new FakeProvider(),
     });
+    revalidatePath("/");
     revalidatePath("/dev/messages");
+    revalidatePath("/inbox");
+    revalidatePath("/leads");
+    revalidatePath("/leads/[id]", "page");
+    revalidatePath("/pipeline");
     if (
       summary.conversationsCreated === 0 &&
       summary.messagesCreated === 0
@@ -90,8 +95,12 @@ export async function attachConversationAction(formData: FormData) {
   }).safeParse(Object.fromEntries(formData));
   if (!parsed.success) throw new Error("Invalid conversation attachment.");
   await attachConversationToLead({ ...parsed.data, ownerId: user.id });
+  revalidatePath("/");
   revalidatePath("/dev/messages");
   revalidatePath("/inbox");
+  revalidatePath("/leads");
+  revalidatePath("/leads/[id]", "page");
+  revalidatePath("/pipeline");
   revalidatePath(`/leads/${parsed.data.leadId}`);
 }
 
@@ -100,8 +109,12 @@ export async function detachConversationAction(formData: FormData) {
   const parsed = idSchema.safeParse(formData.get("conversationId"));
   if (!parsed.success) throw new Error("Invalid conversation.");
   await detachConversation({ conversationId: parsed.data, ownerId: user.id });
+  revalidatePath("/");
   revalidatePath("/dev/messages");
   revalidatePath("/inbox");
+  revalidatePath("/leads");
+  revalidatePath("/leads/[id]", "page");
+  revalidatePath("/pipeline");
 }
 
 export async function classifyConversationAction(formData: FormData) {

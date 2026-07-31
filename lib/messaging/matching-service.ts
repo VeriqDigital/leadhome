@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import {
+  JobType,
   Prisma,
   type ConversationMatchKind,
   type ConversationReviewState,
@@ -12,11 +13,29 @@ import { recordActivity } from "@/lib/activity-service";
 import {
   enqueueConversationAnalysisAfterLeadLink,
 } from "@/lib/ai/conversation-analysis/job-service";
+import { logJobEvent } from "@/lib/jobs/logging";
+import {
+  normalizeEmailAddresses,
+  normalizeParticipantName,
+} from "./participant-identity";
 import type { NormalizedMessage } from "./provider";
+import { detectCompanyAfterAttachment } from "./company-detection-service";
+import {
+  enqueueCompanyDetectionJob,
+} from "./company-detection-job-service";
+
+export {
+  normalizeEmailAddresses,
+  normalizeParticipantName,
+} from "./participant-identity";
 
 export const MAX_POSSIBLE_MATCHES = 3;
 export const MAX_MATCH_QUERY_ROWS = 20;
 export const MAX_REEVALUATION_MESSAGES = 100;
+
+export type ConversationCompanyDetectionMode =
+  | "INLINE"
+  | "ENQUEUE_GMAIL_IMPORT";
 
 export type LeadMatchReasonCode =
   | "EXACT_SUBMISSION_ID"
@@ -121,42 +140,6 @@ function fingerprint(value: unknown) {
   return createHash("sha256")
     .update(JSON.stringify(value))
     .digest("hex");
-}
-
-export function normalizeEmailAddresses(
-  value: string | string[] | null | undefined,
-): string[] {
-  const values = Array.isArray(value) ? value : value ? [value] : [];
-  const addresses = values.flatMap((item) => {
-    const bracketed = [...item.matchAll(/<\s*([^<>]+?)\s*>/g)]
-      .map((match) => match[1]);
-    return bracketed.length ? bracketed : item.split(",");
-  });
-  return [
-    ...new Set(
-      addresses
-        .map((item) => item.trim().toLowerCase())
-        .filter((item) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(item)),
-    ),
-  ];
-}
-
-export function normalizeParticipantName(value: string | null | undefined) {
-  if (!value) return null;
-  const angleAddresses = [...value.matchAll(/<\s*([^<>]+?)\s*>/g)];
-  if (angleAddresses.length > 1) return null;
-  const display = angleAddresses.length === 1
-    ? value.slice(0, angleAddresses[0].index).trim()
-    : normalizeEmailAddresses(value).length
-      ? ""
-      : value.trim();
-  const normalized = display
-    .replace(/^["']|["']$/g, "")
-    .normalize("NFKC")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-  return normalized || null;
 }
 
 function conversationIdentity(
@@ -661,10 +644,12 @@ export async function applyConversationLeadMatch({
   ownerId,
   conversationId,
   match,
+  companyDetectionMode = "INLINE",
 }: {
   ownerId: string;
   conversationId: string;
   match: LeadMatchResult;
+  companyDetectionMode?: ConversationCompanyDetectionMode;
 }) {
   const result = await prisma.$transaction(async (tx) => {
     const current = await tx.conversation.findFirst({
@@ -795,6 +780,43 @@ export async function applyConversationLeadMatch({
     };
   });
   if (result.attached) {
+    if (companyDetectionMode === "ENQUEUE_GMAIL_IMPORT") {
+      try {
+        const enqueued = await enqueueCompanyDetectionJob({
+          ownerId,
+          conversationId,
+        });
+        if (enqueued.kind === "not-found") {
+          logJobEvent("company_detection_enqueue_failed", {
+            jobType: JobType.COMPANY_DETECTION,
+            ownerId,
+            trigger: "GMAIL_IMPORT",
+            failed: 1,
+            errorCode: "COMPANY_DETECTION_CONVERSATION_UNAVAILABLE",
+          });
+        } else {
+          logJobEvent("company_detection_queued", {
+            jobId: enqueued.job.id,
+            jobType: JobType.COMPANY_DETECTION,
+            ownerId,
+            trigger: "GMAIL_IMPORT",
+            queued: enqueued.kind === "queued" ? 1 : 0,
+            reused: enqueued.kind === "existing" ? 1 : 0,
+            failed: 0,
+          });
+        }
+      } catch {
+        logJobEvent("company_detection_enqueue_failed", {
+          jobType: JobType.COMPANY_DETECTION,
+          ownerId,
+          trigger: "GMAIL_IMPORT",
+          failed: 1,
+          errorCode: "COMPANY_DETECTION_ENQUEUE_FAILED",
+        });
+      }
+    } else {
+      await detectCompanyAfterAttachment(ownerId, conversationId);
+    }
     await enqueueConversationAnalysisAfterLeadLink(ownerId, conversationId);
   }
   return result;

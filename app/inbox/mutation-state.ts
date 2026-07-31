@@ -1,7 +1,14 @@
+import type { ConversationCompanyView } from "@/lib/messaging/company-detection-service";
+
 export type CanonicalInboxControls = {
   id: string;
   leadId: string | null;
-  lead: { id: string; name: string; email: string | null } | null;
+  lead: {
+    id: string;
+    name: string;
+    email: string | null;
+    company: string | null;
+  } | null;
   classification:
     | "UNKNOWN"
     | "LEAD"
@@ -32,3 +39,16 @@ export const initialInboxMutationState: InboxMutationState = {
   success: false,
   message: "",
 };
+
+export type CompanyDetectionMutationState = {
+  success: boolean;
+  changed?: boolean;
+  message: string;
+  companyView?: ConversationCompanyView;
+};
+
+export const initialCompanyDetectionMutationState:
+  CompanyDetectionMutationState = {
+    success: false,
+    message: "",
+  };

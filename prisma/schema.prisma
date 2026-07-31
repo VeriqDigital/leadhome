@@ -8,9 +8,9 @@ datasource db {
 }
 
 model User {
-  id                              String                           @id @default(cuid())
+  id                              String                                   @id @default(cuid())
   name                            String?
-  email                           String                           @unique
+  email                           String                                   @unique
   emailVerified                   DateTime?
   image                           String?
   passwordHash                    String?
@@ -25,9 +25,10 @@ model User {
   jobs                            Job[]
   conversationAnalyses            ConversationAnalysis[]
   conversationLeadMatchDismissals ConversationLeadMatchDismissal[]
-  conversationIntelligenceEnabled Boolean                          @default(false)
-  createdAt                       DateTime                         @default(now())
-  updatedAt                       DateTime                         @updatedAt
+  companySuggestionDismissals     ConversationCompanySuggestionDismissal[]
+  conversationIntelligenceEnabled Boolean                                  @default(false)
+  createdAt                       DateTime                                 @default(now())
+  updatedAt                       DateTime                                 @updatedAt
 }
 
 model Account {
@@ -92,25 +93,26 @@ model InboundSubmission {
 }
 
 model Lead {
-  id                              String                           @id @default(cuid())
+  id                              String                                   @id @default(cuid())
   userId                          String
-  user                            User                             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                            User                                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   inboundSubmissions              InboundSubmission[]
   activities                      LeadActivity[]
   conversations                   Conversation[]
   tasks                           Task[]
   conversationLeadMatchDismissals ConversationLeadMatchDismissal[]
+  companySuggestionDismissals     ConversationCompanySuggestionDismissal[]
   name                            String
   email                           String?
   phone                           String?
   company                         String?
-  source                          LeadSource                       @default(MANUAL)
-  status                          LeadStatus                       @default(NEW)
+  source                          LeadSource                               @default(MANUAL)
+  status                          LeadStatus                               @default(NEW)
   message                         String?
-  estimatedValue                  Decimal?                         @db.Decimal(12, 2)
+  estimatedValue                  Decimal?                                 @db.Decimal(12, 2)
   nextFollowUpDate                DateTime?
-  createdAt                       DateTime                         @default(now())
-  updatedAt                       DateTime                         @updatedAt
+  createdAt                       DateTime                                 @default(now())
+  updatedAt                       DateTime                                 @updatedAt
 
   @@unique([id, userId])
   @@index([userId, createdAt])
@@ -201,34 +203,35 @@ model OAuthState {
 }
 
 model Conversation {
-  id                     String                           @id @default(cuid())
-  accountId              String
-  account                CommunicationAccount             @relation(fields: [accountId, ownerId, provider], references: [id, ownerId, provider], onDelete: Cascade)
-  ownerId                String
-  owner                  User                             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  provider               MessageProvider
-  providerConversationId String
-  leadId                 String?
-  lead                   Lead?                            @relation(fields: [leadId], references: [id], onDelete: SetNull)
-  subject                String?
-  status                 ConversationStatus               @default(OPEN)
-  classification         ConversationClassification       @default(UNKNOWN)
-  classificationIsManual Boolean                          @default(false)
-  reviewState            ConversationReviewState          @default(NEEDS_REVIEW)
-  manuallyDetached       Boolean                          @default(false)
-  providerMetadata       Json?
-  matchKind              ConversationMatchKind?
-  matchReason            String?
-  matchCandidateLeadIds  Json?
-  lastMessageAt          DateTime?
-  baselineImportedAt     DateTime?
-  messages               Message[]
-  activities             LeadActivity[]
-  tasks                  Task[]
-  analysis               ConversationAnalysis?
-  leadMatchDismissals    ConversationLeadMatchDismissal[]
-  createdAt              DateTime                         @default(now())
-  updatedAt              DateTime                         @updatedAt
+  id                          String                                   @id @default(cuid())
+  accountId                   String
+  account                     CommunicationAccount                     @relation(fields: [accountId, ownerId, provider], references: [id, ownerId, provider], onDelete: Cascade)
+  ownerId                     String
+  owner                       User                                     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  provider                    MessageProvider
+  providerConversationId      String
+  leadId                      String?
+  lead                        Lead?                                    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  subject                     String?
+  status                      ConversationStatus                       @default(OPEN)
+  classification              ConversationClassification               @default(UNKNOWN)
+  classificationIsManual      Boolean                                  @default(false)
+  reviewState                 ConversationReviewState                  @default(NEEDS_REVIEW)
+  manuallyDetached            Boolean                                  @default(false)
+  providerMetadata            Json?
+  matchKind                   ConversationMatchKind?
+  matchReason                 String?
+  matchCandidateLeadIds       Json?
+  lastMessageAt               DateTime?
+  baselineImportedAt          DateTime?
+  messages                    Message[]
+  activities                  LeadActivity[]
+  tasks                       Task[]
+  analysis                    ConversationAnalysis?
+  leadMatchDismissals         ConversationLeadMatchDismissal[]
+  companySuggestionDismissals ConversationCompanySuggestionDismissal[]
+  createdAt                   DateTime                                 @default(now())
+  updatedAt                   DateTime                                 @updatedAt
 
   @@unique([accountId, providerConversationId])
   @@unique([id, ownerId])
@@ -255,6 +258,24 @@ model ConversationLeadMatchDismissal {
   @@unique([ownerId, conversationId, leadId, evidenceFingerprint], map: "ConversationLeadMatchDismissal_owner_match_fingerprint_key")
   @@index([ownerId, conversationId, dismissedAt], map: "ConversationLeadMatchDismissal_owner_conversation_dismissed_idx")
   @@index([ownerId, leadId], map: "ConversationLeadMatchDismissal_owner_lead_idx")
+}
+
+model ConversationCompanySuggestionDismissal {
+  id                  String       @id @default(cuid())
+  ownerId             String
+  owner               User         @relation(fields: [ownerId], references: [id], onDelete: Cascade, map: "ConversationCompanySuggestionDismissal_ownerId_fkey")
+  conversationId      String
+  conversation        Conversation @relation(fields: [conversationId, ownerId], references: [id, ownerId], onDelete: Cascade, map: "ConversationCompanySuggestionDismissal_conversation_owner_fkey")
+  leadId              String
+  lead                Lead         @relation(fields: [leadId, ownerId], references: [id, userId], onDelete: Cascade, map: "ConversationCompanySuggestionDismissal_lead_owner_fkey")
+  candidateValue      String
+  evidenceSource      String
+  evidenceFingerprint String
+  dismissedAt         DateTime     @default(now())
+
+  @@unique([ownerId, conversationId, leadId, evidenceFingerprint], map: "CompanySuggestionDismissal_owner_candidate_fingerprint_key")
+  @@index([ownerId, conversationId, leadId, dismissedAt], map: "CompanySuggestionDismissal_owner_conversation_lead_idx")
+  @@index([ownerId, leadId], map: "CompanySuggestionDismissal_owner_lead_idx")
 }
 
 model Message {
@@ -510,6 +531,7 @@ enum TaskStatus {
 enum JobType {
   GMAIL_SYNC
   CONVERSATION_ANALYSIS
+  COMPANY_DETECTION
 }
 
 enum JobStatus {

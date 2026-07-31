@@ -65,12 +65,21 @@ meaningfully changed identity evidence to be evaluated later. Deleting the
 owner, conversation, or lead cascades its dismissal rows. Manual detach remains
 the broader conversation-level suppression and is never undone by import.
 
-Existing conversations use an explicit authenticated Recheck action that loads
-one owned conversation and at most 100 identity-only inbound messages before
-calling the same matcher. A detail render may calculate a bounded read-only
-view but never persists during rendering. There is no matching queue and no
-unbounded owner scan in an Inbox request. A matching failure does not roll back
-provider messages that were already imported successfully.
+Existing conversations use an explicit authenticated **Recheck matches**
+action that loads one owned conversation and at most 100 identity-only inbound
+messages before calling the same matcher. A detail render may calculate a
+bounded read-only view but never persists during rendering. There is no
+matching queue and no unbounded owner scan in an Inbox request. A matching
+failure does not roll back provider messages that were already imported
+successfully.
+
+When this matcher creates an automatic attachment during Gmail sync, it
+enqueues one owner-scoped, idempotent `COMPANY_DETECTION` job after the import
+transaction. The job uses the centralized database-only detector and stored
+evidence; it makes no Gmail or LLM call. Enqueue failure is isolated from the
+successful import, and execution rechecks canonical attachment/company state
+before any write. Fake-provider imports keep the immediate detector path for
+local development.
 
 ## Timeline policy
 

@@ -19,6 +19,8 @@ export type JobLogEvent =
   | "analysis_failed"
   | "analysis_cancelled"
   | "analysis_enqueue_failed"
+  | "company_detection_queued"
+  | "company_detection_enqueue_failed"
   | "stale_job_recovered"
   | "jobs_purged";
 
@@ -38,6 +40,7 @@ export type JobLogDetails = {
   inputTokens?: number;
   outputTokens?: number;
   inputTruncated?: boolean;
+  errorCode?: string;
   queued?: number;
   reused?: number;
   skipped?: number;

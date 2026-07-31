@@ -66,6 +66,8 @@ export async function createLeadFromConversationAction(
   revalidatePath("/");
   revalidatePath("/inbox");
   revalidatePath("/leads");
+  revalidatePath("/leads/[id]", "page");
+  revalidatePath("/pipeline");
   revalidatePath(`/leads/${leadId}`);
   redirect(`/leads/${leadId}`);
 }

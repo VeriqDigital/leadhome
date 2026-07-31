@@ -95,19 +95,48 @@ export type ConversationAnalysisJobResult = {
   inputTruncated: boolean;
 };
 
+export type CompanyDetectionJobPayload = {
+  conversationId: string;
+  trigger: "GMAIL_IMPORT";
+};
+
+export type CompanyDetectionJobProgress = {
+  phase: "QUEUED" | "DETECTING" | "COMPLETED";
+  processed: number;
+  total?: number;
+  percent?: number;
+  message: string;
+};
+
+export type CompanyDetectionJobResult = {
+  conversationId: string;
+  changed: boolean;
+  outcome: "APPLIED" | "NO_CHANGE" | "STALE" | "NOT_APPLICABLE";
+  companyState:
+    | "NOT_APPLICABLE"
+    | "COMPANY_PRESENT"
+    | "SUGGESTED"
+    | "NO_SUGGESTION";
+  leadId: string | null;
+  durationMs: number;
+};
+
 export type JobPayloadByType = {
   GMAIL_SYNC: GmailSyncJobPayload;
   CONVERSATION_ANALYSIS: ConversationAnalysisJobPayload;
+  COMPANY_DETECTION: CompanyDetectionJobPayload;
 };
 
 export type JobResultByType = {
   GMAIL_SYNC: GmailSyncJobResult;
   CONVERSATION_ANALYSIS: ConversationAnalysisJobResult;
+  COMPANY_DETECTION: CompanyDetectionJobResult;
 };
 
 export type JobProgress =
   | GmailSyncJobProgress
-  | ConversationAnalysisJobProgress;
+  | ConversationAnalysisJobProgress
+  | CompanyDetectionJobProgress;
 
 export type GmailSyncJobView = {
   id: string;

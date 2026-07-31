@@ -29,6 +29,9 @@ const mocks = vi.hoisted(() => ({
     updatedAt: Date;
   },
 }));
+const cache = vi.hoisted(() => ({
+  revalidatePath: vi.fn(),
+}));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/auth-user", () => ({
   requireUser: vi.fn().mockResolvedValue({ id: "user-a" }),
@@ -39,7 +42,7 @@ vi.mock("@/lib/prisma", () => ({
     lead: { deleteMany: mocks.deleteLeads },
   },
 }));
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("next/cache", () => cache);
 vi.mock("next/navigation", () => ({
   redirect: vi.fn(() => {
     throw new Error("NEXT_REDIRECT");
@@ -372,6 +375,7 @@ describe("lead action activity transactions", () => {
         ),
       ),
     ).toHaveLength(0);
+    expect(cache.revalidatePath).toHaveBeenCalledWith("/inbox");
   });
 
   it("returns an accurate success without writing an unchanged save", async () => {

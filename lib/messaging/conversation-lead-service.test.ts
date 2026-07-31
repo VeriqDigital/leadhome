@@ -13,6 +13,9 @@ const state = vi.hoisted(() => ({
 const analysis = vi.hoisted(() => ({
   enqueue: vi.fn(),
 }));
+const company = vi.hoisted(() => ({
+  detect: vi.fn(),
+}));
 
 const database = vi.hoisted(() => ({
   conversation: {
@@ -98,6 +101,9 @@ vi.mock("@/lib/prisma", () => ({
 vi.mock("@/lib/ai/conversation-analysis/job-service", () => ({
   enqueueConversationAnalysisAfterLeadLink: analysis.enqueue,
 }));
+vi.mock("./company-detection-service", () => ({
+  detectCompanyAfterAttachment: company.detect,
+}));
 
 const {
   DuplicateLeadConfirmationRequired,
@@ -141,6 +147,7 @@ beforeEach(() => {
   };
   vi.clearAllMocks();
   analysis.enqueue.mockResolvedValue(undefined);
+  company.detect.mockResolvedValue(null);
 });
 
 describe("create lead from conversation", () => {
@@ -224,6 +231,11 @@ describe("create lead from conversation", () => {
       "owner-a",
       "conversation-a",
     );
+    expect(company.detect).toHaveBeenCalledOnce();
+    expect(company.detect).toHaveBeenCalledWith(
+      "owner-a",
+      "conversation-a",
+    );
     expect(database.lead.update.mock.invocationCallOrder[0]).toBeLessThan(
       analysis.enqueue.mock.invocationCallOrder[0],
     );
@@ -252,6 +264,7 @@ describe("create lead from conversation", () => {
     expect(result).toEqual({ leadId: "lead-existing", created: false });
     expect(state.leads).toHaveLength(1);
     expect(analysis.enqueue).toHaveBeenCalledTimes(1);
+    expect(company.detect).toHaveBeenCalledTimes(1);
   });
 
   it("does not enqueue when the conversation is already attached", async () => {
@@ -266,5 +279,6 @@ describe("create lead from conversation", () => {
     ).rejects.toThrow("Conversation is already attached");
 
     expect(analysis.enqueue).not.toHaveBeenCalled();
+    expect(company.detect).not.toHaveBeenCalled();
   });
 });

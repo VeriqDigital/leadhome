@@ -288,6 +288,7 @@ export async function runGmailSyncJob(
       ),
       options: {
         persistAccountSummary: false,
+        companyDetectionMode: "ENQUEUE_GMAIL_IMPORT",
         onConversationChanged(change) {
           changedConversationIds.add(change.conversationId);
         },
@@ -380,6 +381,9 @@ export async function runGmailSyncJob(
     revalidatePath("/inbox");
     revalidatePath("/settings");
     revalidatePath("/");
+    revalidatePath("/leads");
+    revalidatePath("/leads/[id]", "page");
+    revalidatePath("/pipeline");
     return result;
   } catch (error) {
     if (

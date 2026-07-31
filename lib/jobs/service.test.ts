@@ -482,6 +482,70 @@ describe("atomic claiming and lifecycle fencing", () => {
       }),
     );
   });
+
+  it("persists bounded Company Detection progress and completion through the generic service", async () => {
+    await expect(
+      heartbeatJob(
+        jobId,
+        workerId,
+        {
+          phase: "DETECTING",
+          processed: 0,
+          total: 1,
+          percent: 10,
+          message: "Checking company evidence.",
+        },
+        now,
+      ),
+    ).resolves.toBe("ok");
+    expect(mocks.updateJobs).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          progress: expect.objectContaining({ phase: "DETECTING" }),
+        }),
+      }),
+    );
+
+    const companyResult = {
+      conversationId: "cm123456789012345678901234",
+      changed: true,
+      outcome: "APPLIED" as const,
+      companyState: "COMPANY_PRESENT" as const,
+      leadId: "cm987654321098765432109876",
+      durationMs: 25,
+    };
+    await expect(
+      completeJob(
+        jobId,
+        workerId,
+        companyResult,
+        now,
+        JobType.COMPANY_DETECTION,
+      ),
+    ).resolves.toBe(true);
+    expect(mocks.updateJobs).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: {
+          id: jobId,
+          type: JobType.COMPANY_DETECTION,
+          status: JobStatus.RUNNING,
+          lockedBy: workerId,
+        },
+        data: expect.objectContaining({
+          status: JobStatus.COMPLETED,
+          result: companyResult,
+          progress: {
+            phase: "COMPLETED",
+            processed: 1,
+            total: 1,
+            percent: 100,
+            message: "Company detection completed.",
+          },
+          idempotencyKey: null,
+        }),
+      }),
+    );
+  });
 });
 
 describe("retry policy, cancellation, stale recovery, and retention", () => {

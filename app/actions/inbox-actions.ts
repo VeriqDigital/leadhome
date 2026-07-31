@@ -19,7 +19,15 @@ import {
   reevaluateConversationLeadMatch,
   type PersistedConversationMatchState,
 } from "@/lib/messaging/matching-service";
-import type { InboxMutationState } from "@/app/inbox/mutation-state";
+import type {
+  CompanyDetectionMutationState,
+  InboxMutationState,
+} from "@/app/inbox/mutation-state";
+import {
+  applyConversationCompanySuggestion,
+  dismissConversationCompanySuggestion,
+  recheckConversationCompany,
+} from "@/lib/messaging/company-detection-service";
 
 const id = z.string().cuid();
 export type SmartMatchMutationState = {
@@ -28,7 +36,6 @@ export type SmartMatchMutationState = {
   message: string;
   conversation?: PersistedConversationMatchState;
 };
-
 const schemas = {
   attach: z.object({ conversationId: id, leadId: id }),
   dismissMatch: z.object({ conversationId: id, leadId: id }),
@@ -52,6 +59,30 @@ const schemas = {
     reviewState: z.enum(["NEEDS_REVIEW", "MATCHED", "IGNORED", "RESOLVED"]),
     status: z.enum(["OPEN", "CLOSED", "ARCHIVED"]),
   }),
+  companyMutation: z.discriminatedUnion("intent", [
+    z.object({
+      intent: z.literal("APPLY"),
+      conversationId: id,
+      expectedLeadId: id,
+      evidenceFingerprint: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/),
+    }),
+    z.object({
+      intent: z.literal("DISMISS"),
+      conversationId: id,
+      expectedLeadId: id,
+      evidenceFingerprint: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/),
+    }),
+    z.object({
+      intent: z.literal("RECHECK"),
+      conversationId: id,
+      expectedLeadId: z.string().optional(),
+      evidenceFingerprint: z.string().optional(),
+    }),
+  ]),
 };
 
 function validationFailure(error: z.ZodError): InboxMutationState {
@@ -69,8 +100,14 @@ async function persisted(
   try {
     const result = await operation();
     if (result.changed) {
+      revalidatePath("/");
       revalidatePath("/inbox");
       revalidatePath("/leads");
+      revalidatePath("/leads/[id]", "page");
+      revalidatePath("/pipeline");
+      if (result.conversation.leadId) {
+        revalidatePath(`/leads/${result.conversation.leadId}`);
+      }
     }
     return {
       success: true,
@@ -167,7 +204,9 @@ export async function recheckConversationMatchesAction(
       };
     }
     if (result.conversation.leadId) {
+      revalidatePath("/");
       revalidatePath("/leads");
+      revalidatePath("/pipeline");
       revalidatePath(`/leads/${result.conversation.leadId}`);
       return {
         success: true,
@@ -248,7 +287,9 @@ export async function allowConversationMatchingAgainAction(
     );
     revalidatePath("/inbox");
     if (result.conversation.leadId) {
+      revalidatePath("/");
       revalidatePath("/leads");
+      revalidatePath("/pipeline");
       revalidatePath(`/leads/${result.conversation.leadId}`);
       return {
         success: true,
@@ -288,6 +329,86 @@ export async function allowConversationMatchingAgainAction(
     return {
       success: false,
       message: "Automatic matching could not be resumed. Please try again.",
+    };
+  }
+}
+
+export async function mutateConversationCompanyAction(
+  _state: CompanyDetectionMutationState,
+  formData: FormData,
+): Promise<CompanyDetectionMutationState> {
+  const parsed = schemas.companyMutation.safeParse(
+    Object.fromEntries(formData),
+  );
+  if (!parsed.success) {
+    return {
+      success: false,
+      message: "That company suggestion is no longer available.",
+    };
+  }
+  const user = await requireUser();
+  try {
+    const result = parsed.data.intent === "APPLY"
+      ? await applyConversationCompanySuggestion({
+          ownerId: user.id,
+          conversationId: parsed.data.conversationId,
+          expectedLeadId: parsed.data.expectedLeadId,
+          evidenceFingerprint: parsed.data.evidenceFingerprint,
+        })
+      : parsed.data.intent === "DISMISS"
+        ? await dismissConversationCompanySuggestion({
+            ownerId: user.id,
+            conversationId: parsed.data.conversationId,
+            expectedLeadId: parsed.data.expectedLeadId,
+            evidenceFingerprint: parsed.data.evidenceFingerprint,
+          })
+        : await recheckConversationCompany(
+            user.id,
+            parsed.data.conversationId,
+          );
+
+    revalidatePath("/inbox");
+    if (result.changed && result.outcome === "APPLIED") {
+      revalidatePath("/");
+      revalidatePath("/leads");
+      revalidatePath("/pipeline");
+      if (result.companyView.lead) {
+        revalidatePath(`/leads/${result.companyView.lead.id}`);
+      }
+    }
+    if (
+      result.outcome === "STALE" ||
+      result.outcome === "NOT_APPLICABLE"
+    ) {
+      return {
+        success: false,
+        changed: false,
+        message:
+          "The lead or company changed before this request was completed.",
+        companyView: result.companyView,
+      };
+    }
+    const message = result.outcome === "APPLIED"
+      ? parsed.data.intent === "RECHECK"
+        ? "Company detected and applied."
+        : "Company applied."
+      : result.outcome === "DISMISSED"
+        ? result.changed
+          ? "Company suggestion dismissed."
+          : "This suggestion was already dismissed."
+        : result.companyView.state === "SUGGESTED"
+          ? "Company evidence checked. A suggestion is ready for review."
+          : "Company evidence checked. No credible suggestion was found.";
+    return {
+      success: true,
+      changed: result.changed,
+      message,
+      companyView: result.companyView,
+    };
+  } catch {
+    return {
+      success: false,
+      message: "Company detection could not be updated. Please try again.",
     };
   }
 }

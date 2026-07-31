@@ -30,7 +30,12 @@ export type ConversationSummaryDto = {
   classification: ConversationClassification;
   reviewState: ConversationReviewState;
   matchKind: ConversationMatchKind | null;
-  lead: { id: string; name: string; email: string | null } | null;
+  lead: {
+    id: string;
+    name: string;
+    email: string | null;
+    company: string | null;
+  } | null;
   lastMessageAt: Date | null;
   latestMessage: {
     sender: string;
@@ -84,7 +89,9 @@ export async function listConversationSummaries(ownerId: string, filters: InboxF
       id: true, provider: true, subject: true, status: true,
       classification: true, reviewState: true, matchKind: true,
       lastMessageAt: true,
-      lead: { select: { id: true, name: true, email: true } },
+      lead: {
+        select: { id: true, name: true, email: true, company: true },
+      },
       messages: {
         orderBy: [{ receivedAt: "desc" }, { id: "desc" }],
         take: 1,
@@ -121,7 +128,9 @@ export async function getConversationDetail(ownerId: string, conversationId: str
       id: true, provider: true, subject: true, status: true,
       classification: true, reviewState: true, matchKind: true, matchReason: true,
       matchCandidateLeadIds: true, manuallyDetached: true,
-      lead: { select: { id: true, name: true, email: true } },
+      lead: {
+        select: { id: true, name: true, email: true, company: true },
+      },
       account: { select: { displayName: true, address: true } },
       tasks: {
         where: { status: "OPEN" },

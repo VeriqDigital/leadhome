@@ -12,6 +12,8 @@ import { JobExecutionError, normalizeJobError } from "./errors";
 import { logJobEvent } from "./logging";
 import {
   ACTIVE_JOB_STATUSES,
+  type CompanyDetectionJobProgress,
+  type CompanyDetectionJobResult,
   type ConversationAnalysisJobProgress,
   type ConversationAnalysisJobResult,
   type ConversationAnalysisJobView,
@@ -122,17 +124,26 @@ async function acquireGmailMailboxMutex(
 }
 
 function queuedProgress(type: JobType): JobProgress {
-  return type === JobType.CONVERSATION_ANALYSIS
-    ? {
+  switch (type) {
+    case JobType.CONVERSATION_ANALYSIS:
+      return {
         phase: "QUEUED",
         processed: 0,
         message: "Conversation analysis queued.",
-      } satisfies ConversationAnalysisJobProgress
-    : {
+      } satisfies ConversationAnalysisJobProgress;
+    case JobType.COMPANY_DETECTION:
+      return {
+        phase: "QUEUED",
+        processed: 0,
+        message: "Company detection queued.",
+      } satisfies CompanyDetectionJobProgress;
+    case JobType.GMAIL_SYNC:
+      return {
         phase: "QUEUED",
         processed: 0,
         message: "Sync queued.",
       } satisfies GmailSyncJobProgress;
+  }
 }
 
 export async function enqueueJobInTransaction<T extends JobType>(
@@ -484,22 +495,36 @@ export async function completeJob(
 ): Promise<boolean> {
   const lockOwner = validWorkerId(workerId);
   const parsed = parseJobResult(type, result);
-  const progress: JobProgress =
-    type === JobType.CONVERSATION_ANALYSIS
-      ? {
-          phase: "COMPLETED",
-          processed: 1,
-          total: 1,
-          percent: 100,
-          message: "Conversation analysis completed.",
-        }
-      : {
+  let progress: JobProgress;
+  switch (type) {
+    case JobType.CONVERSATION_ANALYSIS:
+      progress = {
+        phase: "COMPLETED",
+        processed: 1,
+        total: 1,
+        percent: 100,
+        message: "Conversation analysis completed.",
+      };
+      break;
+    case JobType.COMPANY_DETECTION:
+      progress = {
+        phase: "COMPLETED",
+        processed: 1,
+        total: 1,
+        percent: 100,
+        message: "Company detection completed.",
+      };
+      break;
+    case JobType.GMAIL_SYNC:
+      progress = {
           phase: "COMPLETED",
           processed: (parsed as GmailSyncJobResult).conversationsProcessed,
           total: (parsed as GmailSyncJobResult).conversationsProcessed,
           percent: 100,
           message: "Gmail sync completed.",
-        };
+      };
+      break;
+  }
   const completed = await prisma.job.updateMany({
     where: {
       id: jobId,
@@ -522,14 +547,19 @@ export async function completeJob(
     },
   });
   if (completed.count === 1) {
-    const durationMs =
-      type === JobType.CONVERSATION_ANALYSIS
-        ? (parsed as ConversationAnalysisJobResult).durationMs ?? undefined
-        : Math.max(
-            0,
-            Date.parse((parsed as GmailSyncJobResult).completedAt) -
-              Date.parse((parsed as GmailSyncJobResult).startedAt),
-          );
+    let durationMs: number | undefined;
+    if (type === JobType.CONVERSATION_ANALYSIS) {
+      durationMs =
+        (parsed as ConversationAnalysisJobResult).durationMs ?? undefined;
+    } else if (type === JobType.COMPANY_DETECTION) {
+      durationMs = (parsed as CompanyDetectionJobResult).durationMs;
+    } else {
+      durationMs = Math.max(
+        0,
+        Date.parse((parsed as GmailSyncJobResult).completedAt) -
+          Date.parse((parsed as GmailSyncJobResult).startedAt),
+      );
+    }
     logJobEvent("job_completed", {
       jobId,
       jobType: type,
@@ -541,15 +571,20 @@ export async function completeJob(
             conversationsProcessed:
               (parsed as GmailSyncJobResult).conversationsProcessed,
           }
-        : {
-            model: (parsed as ConversationAnalysisJobResult).model ?? undefined,
-            inputTokens:
-              (parsed as ConversationAnalysisJobResult).inputTokens ?? undefined,
-            outputTokens:
-              (parsed as ConversationAnalysisJobResult).outputTokens ?? undefined,
-            inputTruncated:
-              (parsed as ConversationAnalysisJobResult).inputTruncated,
-          }),
+        : type === JobType.CONVERSATION_ANALYSIS
+          ? {
+              model:
+                (parsed as ConversationAnalysisJobResult).model ?? undefined,
+              inputTokens:
+                (parsed as ConversationAnalysisJobResult).inputTokens ??
+                undefined,
+              outputTokens:
+                (parsed as ConversationAnalysisJobResult).outputTokens ??
+                undefined,
+              inputTruncated:
+                (parsed as ConversationAnalysisJobResult).inputTruncated,
+            }
+          : {}),
     });
   }
   return completed.count === 1;

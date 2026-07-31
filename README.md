@@ -22,6 +22,9 @@ not implemented.
 - Deterministic Smart Lead Matching with conservative automatic attachment,
   review-only suggestions, persistent dismissals, manual-detach protection,
   and owner-scoped recovery.
+- Automatic Company Detection with conservative owner-scoped domain
+  associations, review-only AI/domain suggestions, persistent dismissals, and
+  compare-and-set protection for manual lead data.
 - Server-to-server website-form ingestion with source tokens, rate limiting,
   validation, and idempotency.
 - A unified, immutable activity timeline shared by lead, message, task,
@@ -255,10 +258,31 @@ Lead matching is deterministic and owner-scoped:
 Automatic matching does not spread an attachment to other existing
 conversations merely because one conversation was manually attached.
 
+## Automatic Company Detection
+
+After a conversation is attached, one centralized database-only service may
+fill a blank `Lead.company` when a credible external business domain maps to
+exactly one normalized company among that owner's other leads. It never
+overwrites an existing or concurrently edited company, and ambiguous,
+conflicting, public-mailbox, disposable, relay, malformed, connected-mailbox,
+outbound-only, and unrelated-recipient evidence fails closed.
+
+Structured Conversation Intelligence company evidence and a name formatted
+from a business domain are suggestion-only. The Inbox owner must explicitly
+apply or dismiss them; dismissals persist for the current evidence fingerprint,
+and **Recheck company** reuses the same owner-scoped detector. Only a real
+company write creates the existing `COMPANY_CHANGED` activity.
+
+Interactive attachment and recheck paths evaluate the bounded detector
+immediately so the server-rendered Inbox can return canonical state. A Gmail
+import that automatically attaches a lead instead enqueues one idempotent
+`COMPANY_DETECTION` job; this keeps nonessential company work out of the Gmail
+import path while reusing the same detector.
+
 ## Background-job operation
 
-LeadHome uses one generic PostgreSQL queue for `GMAIL_SYNC` and
-`CONVERSATION_ANALYSIS`.
+LeadHome uses one generic PostgreSQL queue for `GMAIL_SYNC`,
+`CONVERSATION_ANALYSIS`, and import-triggered `COMPANY_DETECTION`.
 
 ```text
 User action
@@ -333,9 +357,11 @@ Conversation Intelligence is opt-in and background-only. The application:
 5. Persists one canonical owner/conversation analysis.
 6. Displays summaries, signals, risks, and suggested next actions.
 
-AI output never auto-attaches a lead, edits CRM fields, changes a stage, or
-creates a task. Creating a task from a suggestion opens an editable prefilled
-form and still requires explicit submission.
+AI output never auto-attaches a lead, automatically edits CRM fields, changes
+a stage, or creates a task. Creating a task from a suggestion opens an editable
+prefilled form and still requires explicit submission. Qualifying structured
+company evidence can be reviewed in the Inbox, but applying it is a separate
+explicit owner action.
 
 See [Conversation Intelligence](docs/conversation-intelligence.md) for data
 bounds, safety rules, configuration, lifecycle, and testing.
@@ -499,7 +525,8 @@ public Google verification is complete.
 - There is no MFA, password reset, billing, notification center, or automation
   rules engine.
 - Smart matching intentionally avoids fuzzy or autonomous matching.
-- AI suggestions require human action and cannot directly update CRM fields.
+- AI suggestions require human action; only the reviewed company-suggestion
+  flow can update a CRM field.
 - OAuth state has no documented retention cleanup job.
 - Date grouping uses runtime/browser local time; users have no stored timezone.
 - Browser and real-database end-to-end coverage is focused rather than

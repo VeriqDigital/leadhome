@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   purge: vi.fn(),
   runGmail: vi.fn(),
   runAnalysis: vi.fn(),
+  runCompanyDetection: vi.fn(),
   reconcileAnalysis: vi.fn(),
   reconcileFailedAnalysis: vi.fn(),
   log: vi.fn(),
@@ -37,6 +38,9 @@ vi.mock("./handlers/gmail-sync", () => {
 });
 vi.mock("./handlers/conversation-analysis", () => ({
   runConversationAnalysisJob: mocks.runAnalysis,
+}));
+vi.mock("./handlers/company-detection", () => ({
+  runCompanyDetectionJob: mocks.runCompanyDetection,
 }));
 vi.mock("@/lib/ai/conversation-analysis/job-service", () => ({
   reconcileConversationAnalysisAfterCompletion: mocks.reconcileAnalysis,
@@ -99,6 +103,15 @@ const analysisResult = {
   inputTruncated: false,
 } as const;
 
+const companyDetectionResult = {
+  conversationId: "cm987654321098765432109876",
+  changed: false,
+  outcome: "NO_CHANGE",
+  companyState: "NO_SUGGESTION",
+  leadId: "cm123456789012345678901234",
+  durationMs: 25,
+} as const;
+
 beforeEach(() => {
   mocks.claim.mockReset();
   mocks.complete.mockReset();
@@ -108,6 +121,7 @@ beforeEach(() => {
   mocks.purge.mockReset();
   mocks.runGmail.mockReset();
   mocks.runAnalysis.mockReset();
+  mocks.runCompanyDetection.mockReset();
   mocks.reconcileAnalysis.mockReset();
   mocks.reconcileFailedAnalysis.mockReset();
   mocks.recover.mockResolvedValue({ recovered: 0, retried: 0, failed: 0 });
@@ -116,6 +130,7 @@ beforeEach(() => {
   mocks.completeCancelled.mockResolvedValue(true);
   mocks.runGmail.mockResolvedValue(result);
   mocks.runAnalysis.mockResolvedValue(analysisResult);
+  mocks.runCompanyDetection.mockResolvedValue(companyDetectionResult);
   mocks.reconcileAnalysis.mockResolvedValue({ kind: "unchanged" });
   mocks.reconcileFailedAnalysis.mockResolvedValue({ kind: "unchanged" });
 });
@@ -189,6 +204,41 @@ describe("generic job invocation", () => {
       "owner-a",
       "cm987654321098765432109876",
     );
+  });
+
+  it("dispatches Company Detection through the same durable worker", async () => {
+    const companyJob: Job = {
+      ...job("job-company"),
+      type: "COMPANY_DETECTION",
+      payload: {
+        conversationId: companyDetectionResult.conversationId,
+        trigger: "GMAIL_IMPORT",
+      },
+      idempotencyKey:
+        `gmail-import:${companyDetectionResult.conversationId}`,
+    };
+    mocks.claim.mockResolvedValueOnce(companyJob).mockResolvedValueOnce(null);
+
+    await expect(
+      runJobInvocation({
+        workerId: "worker-123",
+        maxJobs: 3,
+        timeBudgetMs: 45_000,
+      }),
+    ).resolves.toEqual(expect.objectContaining({ completed: 1 }));
+
+    expect(mocks.runCompanyDetection).toHaveBeenCalledWith(companyJob, {
+      workerId: "worker-123",
+      deadlineAt: expect.any(Number),
+    });
+    expect(mocks.complete).toHaveBeenCalledWith(
+      "job-company",
+      "worker-123",
+      companyDetectionResult,
+      undefined,
+      "COMPANY_DETECTION",
+    );
+    expect(mocks.reconcileAnalysis).not.toHaveBeenCalled();
   });
 
   it("persists retry and permanent-failure outcomes", async () => {

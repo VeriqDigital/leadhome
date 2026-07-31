@@ -65,6 +65,7 @@ function revalidateLead(id?: string) {
   revalidatePath("/");
   revalidatePath("/leads");
   revalidatePath("/pipeline");
+  revalidatePath("/inbox");
   if (id) revalidatePath(`/leads/${id}`);
 }
 
