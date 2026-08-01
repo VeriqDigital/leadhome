@@ -67,6 +67,8 @@ export type TaskListFilters = {
   now?: Date;
 };
 
+export type TaskView = NonNullable<TaskListFilters["view"]>;
+
 export type TaskSort =
   | "due-asc"
   | "due-desc"
@@ -110,6 +112,33 @@ export function taskOrderBy(
         { id: "asc" },
       ];
   }
+}
+
+export function taskViewWhere(
+  view: TaskView,
+  now: Date,
+): Prisma.TaskWhereInput {
+  const startOfToday = new Date(now);
+  startOfToday.setHours(0, 0, 0, 0);
+  const endOfToday = new Date(startOfToday);
+  endOfToday.setDate(endOfToday.getDate() + 1);
+
+  if (view === "completed") return { status: "COMPLETED" };
+  if (view === "cancelled") return { status: "CANCELLED" };
+  if (view === "all") return {};
+  if (view === "overdue") {
+    return { status: "OPEN", dueAt: { lt: now } };
+  }
+  if (view === "today") {
+    return {
+      status: "OPEN",
+      dueAt: { gte: startOfToday, lt: endOfToday },
+    };
+  }
+  if (view === "upcoming") {
+    return { status: "OPEN", dueAt: { gte: endOfToday } };
+  }
+  return { status: "OPEN" };
 }
 
 async function validateRelations(
@@ -432,25 +461,8 @@ export async function getTask(ownerId: string, taskId: string) {
 
 export async function listTasks(ownerId: string, filters: TaskListFilters) {
   const now = filters.now ?? new Date();
-  const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
-  const endOfToday = new Date(startOfToday);
-  endOfToday.setDate(endOfToday.getDate() + 1);
   const view = filters.view ?? "open";
-  const viewWhere: Prisma.TaskWhereInput =
-    view === "completed"
-      ? { status: "COMPLETED" }
-      : view === "cancelled"
-        ? { status: "CANCELLED" }
-      : view === "all"
-        ? {}
-        : view === "overdue"
-          ? { status: "OPEN", dueAt: { lt: now } }
-          : view === "today"
-            ? { status: "OPEN", dueAt: { gte: startOfToday, lt: endOfToday } }
-            : view === "upcoming"
-              ? { status: "OPEN", dueAt: { gte: endOfToday } }
-              : { status: "OPEN" };
+  const viewWhere = taskViewWhere(view, now);
   const query = filters.query?.trim().slice(0, 100);
   const page = Math.min(Math.max(filters.page, 1), 10_000);
   const rows = await prisma.task.findMany({

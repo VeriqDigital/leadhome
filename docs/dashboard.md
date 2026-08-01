@@ -14,7 +14,11 @@ The dashboard renders three sections in this order:
    bookmarkable destination.
 2. **Today's Work** contains at most eight direct record links sampled from the
    attention queues. It is a shortlist rather than a duplicate Inbox, Leads, or
-   Tasks page.
+   Tasks page. Samples are assembled in category order (up to two replies, two
+   current-day tasks, two untouched leads, one match review, and one company
+   review), then deduplicated by underlying conversation, task, or lead before
+   the eight-record limit. A conversation needing both a reply and company
+   review therefore appears once, under the higher-priority reply action.
 3. **Business Health** keeps pipeline value, active opportunities, wins this
    week, new-stage lead volume, pipeline distribution, and five recent
    meaningful activities below the work surfaces.
@@ -70,6 +74,9 @@ Included leads:
 Contacted and later-stage leads, including won and lost leads, are excluded by
 the `NEW` requirement. Deleted leads cannot be returned. No arbitrary creation
 grace period was added because LeadHome has no existing canonical grace rule.
+Phone calls and other offline contact are only recognized if the existing CRM
+workflow recorded an owner-scoped `MESSAGE_SENT` activity; LeadHome does not
+infer unrecorded offline contact.
 
 Destination: `/leads?attention=untouched`.
 
@@ -86,12 +93,14 @@ Destination: `/inbox?attention=match-review`.
 ### 5. Company suggestions need approval
 
 Potential conversations must be owner-scoped, open, active in review, attached
-to an owned lead, and have a null company. Up to 100 recent candidates are
-passed through the existing canonical company-detection service with database
-concurrency limited to five. Only views returning the current `SUGGESTED`
-state count. This automatically respects current attachment, populated
-company, evidence fingerprints, and dismissals without duplicating company
-rules.
+to an owned lead, have a null company, and contain an owned inbound message.
+The oldest 100 candidates are passed through the existing canonical
+company-detection service with database concurrency limited to five. Only
+views returning the current `SUGGESTED` state count. The inbound prefilter is
+safe because the canonical detector cannot produce a suggestion without an
+external inbound identity. The canonical view automatically respects current
+attachment, populated company, evidence fingerprints, and dismissals without
+duplicating company rules.
 
 The displayed count has a `+` suffix when more than 100 candidates exist or a
 candidate evaluation fails, making it an explicit lower bound. This bounded
@@ -109,7 +118,10 @@ with daily CRM work.
 - Today's Work returns at most eight records.
 - Per-category dashboard samples use at most four source rows; at most two of
   a category enter the final shortlist.
-- Inbox attention ID sets are capped at 500 records.
+- Awaiting-response and match-review Inbox ID sets are capped at 500 records.
+  Their Dashboard counts use the same cap and show `500+` if more records
+  qualify, so the displayed count and bounded destination have the same
+  semantics.
 - Company review evaluates at most 100 candidate conversations with concurrency
   five.
 - Recent Activity is capped at five meaningful events.
@@ -132,15 +144,32 @@ pagination URLs. Tasks reuse the existing `view=overdue` filter.
 ## Empty and failure behavior
 
 When every category count is zero, the dashboard says the user is caught up
-and does not invent advice. The dashboard streams an announced loading state.
+and does not invent advice. A bounded company scan that finds no visible
+suggestion but has more candidates or an evaluation failure instead says that
+additional records may need review; it never renders a misleading `0+` or
+"caught up" state. The dashboard streams an announced loading state.
 Attention, business-health, and recent-activity failures are isolated: an
 attention failure offers direct Inbox/Leads/Tasks links, while secondary
 failure messages do not blank the work surface.
 
+## Performance audit
+
+The final audit verified bounded projections rather than loading message
+bodies or full records. Awaiting response uses one indexed latest-message
+lateral lookup; tasks, leads, and match review use count plus four-row samples;
+company review uses a 101-row candidate probe and at most 100 canonical
+evaluations in batches of five. On the configured remote development database,
+an empty-owner Dashboard request was about 0.46 seconds. A representative
+owner with 16 open attached conversations rendered the full Dashboard in about
+1.20 seconds and the company-review Inbox filter in about 0.76 seconds. Network
+round trips and canonical company evaluation dominated. No new persisted cache
+or derived attention record was justified for this bounded milestone.
+
 ## Deferred work
 
-This milestone does not add AI prioritization, buying-signal detection,
-free-text follow-up detection, notifications, automation rules, polling, or
-customizable widgets. Awaiting-response classification is intentionally
-conservative and excludes `UNKNOWN` conversations until a user or existing
-workflow classifies them as a lead or customer.
+Contact Extraction, Inbox Prioritization, AI Buying Signal Detection,
+free-text Follow-up Detection, Notification Center, and Automation Rules
+Engine remain later Phase 2 milestones. This milestone also does not add
+polling or customizable widgets. Awaiting-response classification is
+intentionally conservative and excludes `UNKNOWN` conversations until a user
+or existing workflow classifies them as a lead or customer.

@@ -11,6 +11,7 @@ describe("dashboard attention destination filters", () => {
     expect(source).toContain('name="attention"');
     expect(source).toContain("inboxAttentionValues");
     expect(source).toContain("Showing attention queue:");
+    expect(source).toContain("classified Lead or Customer qualify");
     expect(source).toContain("parseInboxAttention(one(params.attention))");
   });
 
@@ -39,5 +40,8 @@ describe("dashboard attention destination filters", () => {
     );
     expect(dashboard).toContain('href: "/tasks?view=overdue"');
     expect(tasks).toContain('"overdue"');
+    expect(tasks).toContain(
+      "Showing open tasks that are past their due time.",
+    );
   });
 });

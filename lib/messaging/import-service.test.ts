@@ -17,6 +17,7 @@ const state = vi.hoisted(() => ({
 
 const matchMock = vi.hoisted(() => vi.fn());
 const enqueueAnalysisMock = vi.hoisted(() => vi.fn());
+const outboundContactMock = vi.hoisted(() => vi.fn());
 
 function noMatchResult(): LeadMatchResult {
   return {
@@ -79,6 +80,7 @@ const database = {
       state.account = { ...state.account, ...data };
       return state.account;
     }),
+    findMany: vi.fn(async () => [{ address: state.account?.address ?? null }]),
   },
   conversation: {
     findUnique: vi.fn(async ({ where }: any) => {
@@ -174,7 +176,9 @@ const database = {
           select.direction
             ? {
                 id: message.id,
+                providerMessageId: message.providerMessageId,
                 direction: message.direction,
+                recipients: message.recipients,
                 subject: message.subject,
                 receivedAt: message.receivedAt,
               }
@@ -244,6 +248,9 @@ vi.doMock("@/lib/prisma", () => ({
 vi.mock("@/lib/ai/conversation-analysis/job-service", () => ({
   enqueueConversationAnalysisAfterLeadLink: enqueueAnalysisMock,
 }));
+vi.mock("./outbound-contact-service", () => ({
+  recordGmailOutboundContactEvidence: outboundContactMock,
+}));
 vi.mock("./matching-service", async () => {
   const actual = await vi.importActual<typeof import("./matching-service")>(
     "./matching-service",
@@ -254,7 +261,9 @@ vi.mock("./matching-service", async () => {
 const { importProviderAccount } = await import("./import-service");
 
 class MutableProvider implements MessageProvider {
-  readonly provider = "FAKE" as const;
+  constructor(
+    readonly provider: MessageProvider["provider"] = "FAKE",
+  ) {}
   conversations: NormalizedConversation[] = [{
     providerConversationId: "thread-a",
     subject: "Inquiry",
@@ -316,6 +325,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   matchMock.mockResolvedValue(noMatchResult());
   enqueueAnalysisMock.mockResolvedValue(undefined);
+  outboundContactMock.mockResolvedValue({ created: 0 });
 });
 
 describe("provider import pipeline", () => {
@@ -396,6 +406,40 @@ describe("provider import pipeline", () => {
           `conversation-import:FAKE:account-a:${conversation.id}`,
       }),
     );
+  });
+
+  it("passes newly imported Gmail outbound messages to contact evidence", async () => {
+    const provider = new MutableProvider("GMAIL");
+    provider.messages.set("thread-a", [
+      {
+        providerMessageId: "gmail-sent-a",
+        direction: "OUTBOUND",
+        sender: "inbox@example.com",
+        recipients: ["lead@example.com"],
+        subject: "Hello",
+        occurredAt: new Date("2026-08-01T12:00:00.000Z"),
+      },
+    ]);
+
+    await importProviderAccount({ ownerId: "owner-a", provider });
+    expect(outboundContactMock).toHaveBeenCalledOnce();
+    expect(outboundContactMock).toHaveBeenCalledWith(
+      database,
+      expect.objectContaining({
+        ownerId: "owner-a",
+        accountId: "account-a",
+        ownedMailboxAddresses: ["inbox@example.com"],
+        messages: [expect.objectContaining({
+          providerMessageId: "gmail-sent-a",
+          direction: "OUTBOUND",
+          recipients: ["lead@example.com"],
+        })],
+      }),
+    );
+
+    outboundContactMock.mockClear();
+    await importProviderAccount({ ownerId: "owner-a", provider });
+    expect(outboundContactMock).not.toHaveBeenCalled();
   });
 
   it("is idempotent when identical data is imported twice", async () => {

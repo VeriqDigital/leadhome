@@ -164,6 +164,7 @@ const {
   listTasks,
   reopenTask,
   taskOrderBy,
+  taskViewWhere,
   updateTask,
 } = await import("./task-service");
 
@@ -584,6 +585,20 @@ describe("task service", () => {
     expect(state.lastListQuery.take).toBe(26);
     expect(state.lastListQuery.orderBy[0]).toEqual({
       dueAt: { sort: "asc", nulls: "last" },
+    });
+  });
+
+  it("defines the canonical overdue view as open work before now", () => {
+    const boundary = new Date("2026-08-01T15:00:00.000Z");
+    expect(taskViewWhere("overdue", boundary)).toEqual({
+      status: "OPEN",
+      dueAt: { lt: boundary },
+    });
+    expect(taskViewWhere("completed", boundary)).toEqual({
+      status: "COMPLETED",
+    });
+    expect(taskViewWhere("cancelled", boundary)).toEqual({
+      status: "CANCELLED",
     });
   });
 

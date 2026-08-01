@@ -15,6 +15,7 @@ vi.mock("@/lib/messaging/company-detection-service", () => company);
 import {
   ATTENTION_SAMPLE_SIZE,
   COMPANY_REVIEW_SCAN_LIMIT,
+  INBOX_ATTENTION_LIMIT,
   TODAY_WORK_LIMIT,
   getDashboardAttention,
   getInboxAttentionConversationIds,
@@ -118,12 +119,25 @@ describe("dashboard attention rules", () => {
     const text = sql.strings.join("?");
 
     expect(sql.values).toContain("owner-a");
+    expect(text).toMatch(
+      /INNER JOIN "Lead" l\s+ON l\."id" = c\."leadId" AND l\."userId" = c\."ownerId"/,
+    );
+    expect(text).toContain('WHERE c."ownerId" = ?');
     expect(text).toContain('c."status" = \'OPEN\'');
     expect(text).toContain('c."reviewState" NOT IN');
     expect(text).toContain("'LEAD'");
     expect(text).toContain("'CUSTOMER'");
+    expect(text).not.toContain("'UNKNOWN'");
     expect(text).toContain("latest.\"direction\" = 'INBOUND'");
     expect(text).toContain('ORDER BY m."receivedAt" DESC, m."id" DESC');
+    expect(text).toContain('latest."receivedAt" AS "lastMessageAt"');
+    expect(text).toContain(
+      'ORDER BY latest."receivedAt" ASC, c."id" ASC',
+    );
+    expect(text).not.toContain("COALESCE");
+    expect(text).not.toContain('m."bodyText"');
+    expect(text).not.toContain('m."bodyHtml"');
+    expect(sql.values.filter((value: unknown) => value === "owner-a")).toHaveLength(2);
   });
 
   it("aggregates categories in stable priority order and bounds today's work", async () => {
@@ -250,8 +264,202 @@ describe("dashboard attention rules", () => {
         lead: { is: { userId: "owner-a", company: null } },
         status: "OPEN",
         reviewState: { notIn: ["IGNORED", "RESOLVED"] },
+        messages: {
+          some: { ownerId: "owner-a", direction: "INBOUND" },
+        },
       }),
     );
+    expect(candidateQuery.orderBy).toEqual([
+      { lastMessageAt: { sort: "asc", nulls: "last" } },
+      { id: "asc" },
+    ]);
+  });
+
+  it("does not report caught up when a bounded company scan may hide work", async () => {
+    database.conversation.findMany.mockImplementation(({ where }) =>
+      where?.matchKind === "AMBIGUOUS"
+        ? Promise.resolve([])
+        : Promise.resolve(
+            Array.from(
+              { length: COMPANY_REVIEW_SCAN_LIMIT + 1 },
+              (_, index) => ({
+                id: `company-${index}`,
+                subject: null,
+                lastMessageAt: now,
+              }),
+            ),
+          ),
+    );
+
+    const result = await getDashboardAttention("owner-a", now);
+
+    expect(result.totalCount).toBe(0);
+    expect(result.totalCountIsLowerBound).toBe(true);
+    expect(result.caughtUp).toBe(false);
+  });
+
+  it("marks Inbox-backed counts as lower bounds at the destination ID cap", async () => {
+    database.$queryRaw.mockResolvedValue([
+      {
+        id: "conversation-a",
+        subject: "Need help",
+        lastMessageAt: now,
+        leadId: "lead-a",
+        leadName: "Alice",
+        company: null,
+        sender: "alice@example.test",
+        totalCount: BigInt(INBOX_ATTENTION_LIMIT + 1),
+      },
+    ]);
+    database.conversation.count.mockResolvedValue(
+      INBOX_ATTENTION_LIMIT + 1,
+    );
+
+    const result = await getDashboardAttention("owner-a", now);
+
+    expect(result.categories.find(
+      (item) => item.key === "AWAITING_RESPONSE",
+    )).toEqual(expect.objectContaining({
+      count: INBOX_ATTENTION_LIMIT,
+      countIsLowerBound: true,
+    }));
+    expect(result.categories.find(
+      (item) => item.key === "MATCH_REVIEW",
+    )).toEqual(expect.objectContaining({
+      count: INBOX_ATTENTION_LIMIT,
+      countIsLowerBound: true,
+    }));
+    expect(result.totalCountIsLowerBound).toBe(true);
+  });
+
+  it("deduplicates one conversation across reply and company work", async () => {
+    database.$queryRaw.mockResolvedValue([
+      {
+        id: "conversation-a",
+        subject: "Need help",
+        lastMessageAt: now,
+        leadId: "lead-a",
+        leadName: "Alice",
+        company: null,
+        sender: "alice@example.test",
+        totalCount: BigInt(1),
+      },
+    ]);
+    database.conversation.findMany.mockImplementation(({ where }) =>
+      where?.matchKind === "AMBIGUOUS"
+        ? Promise.resolve([])
+        : Promise.resolve([
+            { id: "conversation-a", subject: "Need help", lastMessageAt: now },
+          ]),
+    );
+    company.getConversationCompanyView.mockResolvedValue(
+      suggestedView("conversation-a"),
+    );
+
+    const result = await getDashboardAttention("owner-a", now);
+
+    expect(result.workItems.filter((item) =>
+      item.href.includes("conversation=conversation-a"),
+    )).toHaveLength(1);
+    expect(result.workItems[0].category).toBe("AWAITING_RESPONSE");
+  });
+
+  it("builds a deterministic eight-record shortlist in category priority", async () => {
+    const awaiting = Array.from({ length: 3 }, (_, index) => ({
+      id: `reply-${index}`,
+      subject: `Reply ${index}`,
+      lastMessageAt: new Date(now.getTime() + index),
+      leadId: `reply-lead-${index}`,
+      leadName: `Reply lead ${index}`,
+      company: null,
+      sender: `reply-${index}@example.test`,
+      totalCount: BigInt(3),
+    }));
+    database.$queryRaw.mockResolvedValue(awaiting);
+    database.task.findMany.mockResolvedValue(
+      Array.from({ length: 3 }, (_, index) => ({
+        id: `task-${index}`,
+        title: `Task ${index}`,
+        dueAt: new Date(now.getTime() + index),
+        lead: null,
+        conversation: null,
+      })),
+    );
+    database.lead.findMany.mockResolvedValue(
+      Array.from({ length: 3 }, (_, index) => ({
+        id: `lead-${index}`,
+        name: `Lead ${index}`,
+        company: null,
+        email: `lead-${index}@example.test`,
+        source: "MANUAL",
+        createdAt: new Date(now.getTime() + index),
+      })),
+    );
+    database.conversation.findMany.mockImplementation(({ where }) =>
+      where?.matchKind === "AMBIGUOUS"
+        ? Promise.resolve(Array.from({ length: 2 }, (_, index) => ({
+            id: `match-${index}`,
+            subject: `Match ${index}`,
+            lastMessageAt: new Date(now.getTime() + index),
+          })))
+        : Promise.resolve(Array.from({ length: 2 }, (_, index) => ({
+            id: `company-${index}`,
+            subject: `Company ${index}`,
+            lastMessageAt: new Date(now.getTime() + index),
+          }))),
+    );
+    company.getConversationCompanyView.mockImplementation(
+      (_ownerId, id: string) => Promise.resolve(suggestedView(id)),
+    );
+
+    const result = await getDashboardAttention("owner-a", now);
+
+    expect(result.workItems).toHaveLength(TODAY_WORK_LIMIT);
+    expect(result.workItems.map((item) => item.category)).toEqual([
+      "AWAITING_RESPONSE",
+      "AWAITING_RESPONSE",
+      "OVERDUE_WORK",
+      "OVERDUE_WORK",
+      "UNTOUCHED_LEADS",
+      "UNTOUCHED_LEADS",
+      "MATCH_REVIEW",
+      "COMPANY_REVIEW",
+    ]);
+    expect(result.workItems.map((item) => item.href)).toEqual([
+      "/inbox?attention=awaiting-response&conversation=reply-0",
+      "/inbox?attention=awaiting-response&conversation=reply-1",
+      "/tasks/task-0/edit",
+      "/tasks/task-1/edit",
+      "/leads/lead-0",
+      "/leads/lead-1",
+      "/inbox?attention=match-review&conversation=match-0",
+      "/inbox?attention=company-review&conversation=company-0",
+    ]);
+  });
+
+  it("drops resolved records when canonical state is recomputed", async () => {
+    database.$queryRaw
+      .mockResolvedValueOnce([{
+        id: "conversation-a",
+        subject: "Need help",
+        lastMessageAt: now,
+        leadId: "lead-a",
+        leadName: "Alice",
+        company: null,
+        sender: "alice@example.test",
+        totalCount: BigInt(1),
+      }])
+      .mockResolvedValueOnce([]);
+
+    const before = await getDashboardAttention("owner-a", now);
+    const after = await getDashboardAttention("owner-a", now);
+
+    expect(before.workItems.some(
+      (item) => item.href.includes("conversation=conversation-a"),
+    )).toBe(true);
+    expect(after.workItems.some(
+      (item) => item.href.includes("conversation=conversation-a"),
+    )).toBe(false);
   });
 
   it("returns the positive zero state when no category needs action", async () => {
@@ -279,7 +487,7 @@ describe("dashboard attention rules", () => {
     expect(database.conversation.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: matchReviewWhere("owner-a"),
-        take: 500,
+        take: INBOX_ATTENTION_LIMIT,
       }),
     );
   });
@@ -287,10 +495,26 @@ describe("dashboard attention rules", () => {
   it("uses bounded samples for every dashboard list", async () => {
     await getDashboardAttention("owner-a", now);
     expect(database.task.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ take: ATTENTION_SAMPLE_SIZE }),
+      expect.objectContaining({
+        take: ATTENTION_SAMPLE_SIZE,
+        orderBy: [{ dueAt: "asc" }, { id: "asc" }],
+      }),
     );
     expect(database.lead.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ take: ATTENTION_SAMPLE_SIZE }),
+      expect.objectContaining({
+        take: ATTENTION_SAMPLE_SIZE,
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      }),
+    );
+    expect(database.conversation.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: matchReviewWhere("owner-a"),
+        take: ATTENTION_SAMPLE_SIZE,
+        orderBy: [
+          { lastMessageAt: { sort: "asc", nulls: "last" } },
+          { id: "asc" },
+        ],
+      }),
     );
   });
 });

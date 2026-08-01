@@ -142,6 +142,7 @@ describe("inbox queries", () => {
     await expect(getConversationDetail("owner-a", "conversation-b")).resolves.toBeNull();
     const query = database.conversation.findFirst.mock.calls[0][0];
     expect(query.where).toEqual({ id: "conversation-b", ownerId: "owner-a" });
+    expect(query.select.providerConversationId).toBe(true);
     expect(query.select.lead.select.company).toBe(true);
     expect(query.select.messages.orderBy).toEqual([{ receivedAt: "asc" }, { id: "asc" }]);
   });

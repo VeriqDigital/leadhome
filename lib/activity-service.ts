@@ -54,6 +54,7 @@ function normalized(input: RecordActivityInput) {
 async function validateRelationships(
   client: ActivityClient,
   inputs: ReturnType<typeof normalized>[],
+  options: { allowUnattachedOutboundMessageLead?: boolean } = {},
 ) {
   const ownerIds = new Set(inputs.map((input) => input.ownerId));
   if (ownerIds.size !== 1) {
@@ -90,7 +91,7 @@ async function validateRelationships(
     messageIds.length
       ? client.message.findMany({
           where: { id: { in: messageIds }, ownerId },
-          select: { id: true, conversationId: true },
+          select: { id: true, conversationId: true, direction: true },
         })
       : [],
   ]);
@@ -124,7 +125,13 @@ async function validateRelationships(
     if (
       message &&
       input.leadId &&
-      conversation?.leadId !== input.leadId
+      conversation?.leadId !== input.leadId &&
+      !(
+        options.allowUnattachedOutboundMessageLead &&
+        input.type === "MESSAGE_SENT" &&
+        message.direction === "OUTBOUND" &&
+        conversation?.leadId === null
+      )
     ) {
       throw new Error("An activity message does not belong to its lead.");
     }
@@ -146,13 +153,14 @@ async function validateRelationships(
   }
 }
 
-export async function recordActivities(
+async function createActivities(
   client: ActivityClient,
   rawInputs: RecordActivityInput[],
+  options: { allowUnattachedOutboundMessageLead?: boolean } = {},
 ) {
   if (!rawInputs.length) return { count: 0 };
   const inputs = rawInputs.map(normalized);
-  await validateRelationships(client, inputs);
+  await validateRelationships(client, inputs, options);
   return client.leadActivity.createMany({
     data: inputs.map((input) => ({
       userId: input.ownerId,
@@ -173,6 +181,33 @@ export async function recordActivities(
       (input) => Boolean(input.idempotencyKey || input.messageId),
     ),
   });
+}
+
+export async function recordActivities(
+  client: ActivityClient,
+  rawInputs: RecordActivityInput[],
+) {
+  return createActivities(client, rawInputs);
+}
+
+/**
+ * The outbound-recipient resolver is the only path allowed to relate an
+ * outbound message from an unattached conversation to a uniquely identified
+ * lead. Normal activity callers retain the stricter conversation/lead check.
+ */
+export async function recordOutboundContactActivities(
+  client: ActivityClient,
+  rawInputs: Array<Omit<RecordActivityInput, "type" | "actorType">>,
+) {
+  return createActivities(
+    client,
+    rawInputs.map((input) => ({
+      ...input,
+      type: "MESSAGE_SENT",
+      actorType: "USER",
+    })),
+    { allowUnattachedOutboundMessageLead: true },
+  );
 }
 
 export async function recordActivity(

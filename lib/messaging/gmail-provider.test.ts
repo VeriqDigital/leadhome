@@ -100,4 +100,85 @@ describe("Gmail message identity normalization", () => {
       recipients: ["jane@example.com"],
     });
   });
+
+  it("uses Gmail's SENT label as canonical outbound evidence for an alias", async () => {
+    mockedCreateGmailClient.mockResolvedValue({
+      account: { address: "owner@example.com" },
+      gmail: {
+        users: {
+          threads: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                messages: [{
+                  id: "message-alias",
+                  internalDate: "1785326460000",
+                  labelIds: ["SENT"],
+                  payload: { headers: [
+                    { name: "From", value: "Alias <sales@example.com>" },
+                    { name: "To", value: "lead@example.com" },
+                  ] },
+                }],
+              },
+            }),
+          },
+        },
+      },
+    } as never);
+
+    const messages = await new GmailProvider("account-1", "owner-1")
+      .listMessages("thread-1");
+    expect(messages[0]).toMatchObject({
+      direction: "OUTBOUND",
+      recipients: ["lead@example.com"],
+    });
+  });
+
+  it("does not normalize a Gmail draft as a sent message", async () => {
+    mockedCreateGmailClient.mockResolvedValue({
+      account: { address: "owner@example.com" },
+      gmail: {
+        users: {
+          threads: {
+            get: vi.fn().mockResolvedValue({
+              data: {
+                messages: [{
+                  id: "draft-a",
+                  internalDate: "1785326460000",
+                  labelIds: ["DRAFT"],
+                  payload: { headers: [
+                    { name: "From", value: "owner@example.com" },
+                    { name: "To", value: "lead@example.com" },
+                  ] },
+                }],
+              },
+            }),
+          },
+        },
+      },
+    } as never);
+
+    await expect(
+      new GmailProvider("account-1", "owner-1").listMessages("thread-1"),
+    ).resolves.toEqual([]);
+  });
+
+  it("lists both inbox and sent threads so sent-only contact can import", async () => {
+    const list = vi.fn().mockResolvedValue({
+      data: { threads: [{ id: "thread-sent" }] },
+    });
+    mockedCreateGmailClient.mockResolvedValue({
+      account: { address: "owner@example.com" },
+      gmail: { users: { threads: { list } } },
+    } as never);
+
+    await expect(
+      new GmailProvider("account-1", "owner-1").listRecentConversations(),
+    ).resolves.toEqual([{ providerConversationId: "thread-sent" }]);
+    expect(list).toHaveBeenCalledWith(
+      expect.objectContaining({
+        q: "newer_than:30d {in:inbox in:sent} -in:spam -in:trash",
+      }),
+      { timeout: 10_000 },
+    );
+  });
 });

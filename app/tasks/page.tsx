@@ -101,7 +101,7 @@ export default async function TasksPage({
         action={
           <Link
             href="/tasks/new"
-            className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#17181c] px-4 text-sm font-semibold text-white dark:bg-white dark:text-[#17181c]"
+            className="action-primary inline-flex h-11 items-center gap-2 rounded-xl border border-transparent px-4 text-sm font-semibold"
           >
             <Plus className="size-4" /> New task
           </Link>
@@ -139,6 +139,11 @@ export default async function TasksPage({
             Apply
           </button>
         </form>
+        {view === "overdue" && (
+          <p role="status" className="mt-3 text-xs text-[#687080]">
+            Showing open tasks that are past their due time.
+          </p>
+        )}
         {result.items.length ? (
           <ul className="mt-6 divide-y divide-black/[0.07] dark:divide-white/[0.08]">
             {result.items.map((task) => {

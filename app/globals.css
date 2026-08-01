@@ -32,6 +32,33 @@ button:not(:disabled):hover {
   transform: translateY(-1px);
 }
 
+/*
+ * Primary actions keep a dark background and white foreground in every theme.
+ * Do not recreate these colors with independent dark-mode utilities: their
+ * cascade can split the pair and produce an inaccessible white-on-white action.
+ */
+.action-primary {
+  background: #17181c !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+.action-primary:not(:disabled):hover {
+  background: #000000 !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+.dark .action-primary {
+  background: #5148b8 !important;
+  border-color: #766ee0 !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+.dark .action-primary:not(:disabled):hover {
+  background: #6259cb !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+
 .dark { color-scheme: dark; --background: #111216; --foreground: #ececef; }
 .dark .dashboard-main { background: #111216; }
 .dark .dashboard-main [class*="text-[#687080]"] { color: #aeb3bd; }
@@ -59,13 +86,13 @@ button:not(:disabled):hover {
   border-color: rgba(255, 255, 255, 0.08);
 }
 .dark .inbox-shell .company-apply-button {
-  background: #f4f6fa;
-  border-color: rgba(255, 255, 255, 0.18);
-  color: #17181c;
+  background: #fbbf24 !important;
+  border-color: #fcd34d !important;
+  color: #1c1400 !important;
 }
 .dark .inbox-shell .company-apply-button:not(:disabled):hover {
-  background: #dfe3eb;
-  color: #111216;
+  background: #f59e0b !important;
+  color: #1c1400 !important;
 }
 .dark .inbox-filters {
   background: #1d1f24;

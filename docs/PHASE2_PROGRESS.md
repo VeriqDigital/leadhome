@@ -2,9 +2,10 @@
 
 ## Current Milestone
 
-Dashboard Needs Attention is the current Phase 2 implementation milestone. It
-turns the existing dashboard from a statistics-first collection of cards into
-an owner-scoped daily work surface derived from canonical CRM state.
+Dashboard Needs Attention is the completed and stabilized Phase 2 milestone.
+It turns the existing dashboard from a statistics-first collection of cards
+into an owner-scoped daily work surface derived from canonical CRM state.
+Contact Extraction is the recommended next milestone, but has not started.
 
 The implementation is intentionally deterministic:
 
@@ -17,9 +18,9 @@ The implementation is intentionally deterministic:
 
 **Complete.**
 
-The centralized attention service, action-first dashboard, destination
-filters, focused regression coverage, documentation, and one supporting index
-migration are implemented and validated.
+The centralized attention service, action-first dashboard, canonical
+destination filters, focused regression coverage, documentation, and one
+supporting index migration are implemented and reconciled.
 
 ## Phase 2 Roadmap
 
@@ -40,14 +41,17 @@ The dashboard now renders **Needs Attention**, **Today's Work**, then
 **Business Health**. Five ordered deterministic categories cover active
 customer replies whose latest message is inbound, overdue open tasks, untouched
 `NEW` leads, active ambiguous lead matches, and canonical visible company
-suggestions. Operational job failures are excluded because they are not
-consistently user-actionable.
+suggestions. Awaiting response is deliberately limited to `LEAD` and
+`CUSTOMER`; `UNKNOWN` conversations are excluded. Operational job failures are
+excluded because they are not consistently user-actionable.
 
 Deep links use `/inbox?attention=...`, `/leads?attention=untouched`, and the
 existing `/tasks?view=overdue`. The Inbox and Leads pages preserve and explain
 their URL-backed attention state. The dashboard work list is capped at eight,
-company review scans at most 100 current candidates through the existing
-detector, and Inbox attention ID sets cap at 500. Migration
+deduplicates underlying records, and keeps deterministic category priority.
+Company review scans the oldest 100 current inbound candidates through the
+existing detector. Awaiting-response and match-review Inbox ID sets cap at 500
+and Dashboard marks overflow as `500+`. Migration
 `20260731210000_add_message_conversation_time_index` supports latest-message
 lookups without changing message history.
 
@@ -58,9 +62,13 @@ below the action surface. See [Dashboard Needs Attention](./dashboard.md) for
 exact inclusion, exclusion, ordering, bounds, failure behavior, and deferred
 signals.
 
-Contact Extraction and the later attention/automation features remain separate
-future milestones. Automatic Company Detection does not alter Smart Lead
-Matching rules or apply AI output to lead identity.
+Contact Extraction is recommended next because the existing Conversation
+Intelligence result, explicit-review UI pattern, owner-scoped activity model,
+and conservative apply semantics provide its prerequisites without depending
+on unfinished prioritization or automation. Inbox Prioritization, AI Buying
+Signal Detection, Follow-up Detection, Notification Center, and Automation
+Rules Engine remain separate later milestones. Automatic Company Detection
+does not alter Smart Lead Matching rules or apply AI output to lead identity.
 
 ## Automatic Company Detection
 
@@ -362,25 +370,27 @@ Vercel 24.x, and removed the polling worker's accumulated abort listeners.
 
 ## Verification
 
-Dashboard Needs Attention passed its final validation on Node 24.18.0:
+Dashboard Needs Attention passed its stabilization validation on Node 24.18.0:
 
-- the focused dashboard, attention, destination-filter, task, pipeline,
-  activity, and schema set passed 10 files / 60 tests;
-- the full suite passed 91 files / 561 tests, with only the explicitly gated
+- the related Dashboard, Inbox, Leads, Tasks, matching, company, Gmail, and
+  owner-isolation regression set passed 39 files / 302 tests;
+- the full suite passed 91 files / 588 tests, with only the explicitly gated
   OpenAI smoke test skipped;
-- Prisma format, validate, and client generation passed;
-- migration status correctly reports the new
-  `20260731210000_add_message_conversation_time_index` migration as pending
-  deployment to the configured database;
+- Prisma format, validate, and normal client generation passed;
+- Prisma found 20 migrations and reports the configured Neon database schema
+  up to date, including
+  `20260731210000_add_message_conversation_time_index`; no separate local
+  PostgreSQL database is configured by this checkout;
 - TypeScript and full ESLint passed;
 - the Next.js 16.2.11 production build passed under Node 24.18.0 and generated
   all 18 static pages; and
 - `git diff --check` passed.
 
 Browser-authenticated manual verification remains for real user records and
-responsive visual review after the new migration is deployed. Automated tests
-cover information order, accessible links, zero/loading/error states, exact
-query rules, bounds, and destination URL preservation.
+responsive visual review. The configured Neon database already has the new
+index migration. Automated tests cover information order, accessible links,
+zero/loading/error states, exact query rules, bounds, and destination URL
+preservation.
 
 The prior Smart Lead Matching verification, including manual-detach recovery
 and canonical presentation stabilization, passed on Node 24.18.0:
@@ -410,8 +420,9 @@ files / 193 tests and the full suite passed 85 files / 524 tests on Node
 24.18.0; the separately gated OpenAI smoke test remained skipped (86 files /
 525 tests including that skip). On the complete implementation, Prisma
 format/validate/generate, TypeScript, full ESLint, and `git diff --check`
-passed. The newly added enqueue/handler/runner tests, complete full suite, and
-Node 24 production build remain the final verification gate.
+passed. The final Dashboard stabilization regression and full-suite runs also
+cover its enqueue, handler, runner, presentation, and owner-isolation paths,
+and the Node 24 production build passes.
 
 ## Known Limitations
 

@@ -96,6 +96,10 @@ describe("company suggestion Inbox UI", () => {
 
   it("renders suggestion evidence and one canonical mutation form", () => {
     const markup = render(view());
+    const globalStyles = readFileSync(
+      new URL("../globals.css", import.meta.url),
+      "utf8",
+    );
 
     expect(markup).toContain("Suggested company");
     expect(markup).toContain("Northstar Roofing");
@@ -115,8 +119,11 @@ describe("company suggestion Inbox UI", () => {
     expect(markup).toContain('value="RECHECK"');
     expect(markup).toContain('aria-label="Apply company"');
     expect(markup).toContain("company-apply-button");
-    expect(markup).toContain("dark:!bg-[#f4f6fa]");
-    expect(markup).toContain("dark:!text-[#17181c]");
+    expect(globalStyles).toContain(
+      ".dark .inbox-shell .company-apply-button",
+    );
+    expect(globalStyles).toContain("background: #fbbf24 !important");
+    expect(globalStyles).toContain("color: #1c1400 !important");
     expect(markup).toContain('aria-label="Dismiss company suggestion"');
     expect(markup).toContain('aria-label="Recheck company"');
   });

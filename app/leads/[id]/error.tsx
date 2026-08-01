@@ -15,7 +15,7 @@ export default function LeadDetailError({
       <button
         type="button"
         onClick={reset}
-        className="mt-5 min-h-11 cursor-pointer rounded-xl bg-[#17181c] px-5 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7770c8] dark:bg-white dark:text-[#17181c]"
+        className="action-primary mt-5 min-h-11 cursor-pointer rounded-xl border border-transparent px-5 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7770c8]"
       >
         Try again
       </button>

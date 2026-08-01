@@ -142,7 +142,7 @@ function CreateSourceForm() {
         </label>
         <button
           disabled={pending}
-          className={`inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#17181c] px-5 text-sm font-semibold text-white hover:bg-black disabled:cursor-not-allowed disabled:opacity-60 dark:!bg-neutral-100 dark:!text-[#17181c] dark:hover:!bg-white ${buttonFocus}`}
+          className={`action-primary inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-transparent px-5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60 ${buttonFocus}`}
         >
           {pending ? (
             <LoaderCircle className="size-4 animate-spin" />
@@ -276,7 +276,7 @@ function IntegrationSteps() {
             key={step}
             className="flex gap-3 rounded-xl border border-black/[0.07] bg-white p-3.5 dark:border-white/[0.07] dark:bg-[#1a1b20]"
           >
-            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-[#24252a] text-[11px] font-bold text-white dark:bg-neutral-100 dark:text-[#17181c]">
+            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-[#24252a] text-[11px] font-bold text-white">
               {index + 1}
             </span>
             <span className="text-xs leading-5 text-[#687080] dark:text-neutral-400">

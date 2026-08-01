@@ -64,10 +64,14 @@ lead's summarized next follow-up. Both the task mutation and summary update
 remain in the same transaction. Repeating a no-op transition does not add
 another task or activity record and does not trigger route revalidation.
 
-The Dashboard uses bounded owner-scoped queries: up to five overdue tasks, five
-due-today tasks, and five upcoming tasks. "Needs Follow-up" counts distinct
-leads whose summarized next follow-up is due by the end of the current local
-day. Dashboard completion uses the same transactional task service.
+The Dashboard's **Follow-ups and tasks overdue** count and the bookmarkable
+`/tasks?view=overdue` destination share the task service's canonical view
+predicate: owner-scoped `OPEN` tasks with a non-null `dueAt` earlier than the
+same request-time `now`. Completed, cancelled, undated, current, and future
+tasks are excluded. The Tasks page announces that active view. Today's Work
+may sample up to two open tasks due before the end of the current local day,
+with overdue records first; task writes still use the same transactional
+service.
 
 ## Inbox workflows
 

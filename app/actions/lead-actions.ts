@@ -213,6 +213,51 @@ export async function updateLeadAction(
   }
 }
 
+export async function markLeadContactedAction(
+  id: string,
+  _state: ActionState,
+  _formData: FormData,
+): Promise<ActionState> {
+  void _state;
+  void _formData;
+  const user = await requireUser();
+  const parsed = leadIdSchema.safeParse(id);
+  if (!parsed.success) return { message: "Lead not found." };
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const lead = await tx.lead.findFirst({
+        where: { id, userId: user.id },
+        select: { id: true },
+      });
+      if (!lead) return { kind: "not-found" as const };
+      const activity = await recordActivity(tx, {
+        ownerId: user.id,
+        leadId: lead.id,
+        type: "MESSAGE_SENT",
+        actorType: "USER",
+        source: "MANUAL",
+        title: "Marked as contacted",
+        description: "Contact recorded manually",
+        idempotencyKey: `manual-contact:${lead.id}`,
+      });
+      return { kind: "saved" as const, created: activity.created };
+    });
+    if (result.kind === "not-found") return { message: "Lead not found." };
+    revalidateLead(id);
+    return {
+      success: true,
+      changed: result.created,
+      message: result.created
+        ? "Lead marked as contacted."
+        : "Contact was already recorded.",
+    };
+  } catch (error) {
+    reportOperationalError("mark lead contacted failed", error);
+    return { message: "We couldn't record this contact. Please try again." };
+  }
+}
+
 export async function deleteLeadAction(id: string) {
   const user = await requireUser();
   const parsed = leadIdSchema.safeParse(id);

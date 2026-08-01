@@ -89,7 +89,7 @@ export class GmailProvider implements MessageProvider {
     let pageToken: string | undefined;
     while (ids.length < this.threadLimit) {
       const response = await gmail.users.threads.list({
-        userId: "me", q: "newer_than:30d in:inbox -in:spam -in:trash",
+        userId: "me", q: "newer_than:30d {in:inbox in:sent} -in:spam -in:trash",
         maxResults: Math.min(50, this.threadLimit - ids.length), pageToken,
       }, { timeout: gmailRequestTimeoutMs(this.deadlineAt) });
       ids.push(...(response.data.threads ?? []).flatMap((thread) => thread.id ? [thread.id] : []));
@@ -110,7 +110,7 @@ export class GmailProvider implements MessageProvider {
       { timeout: gmailRequestTimeoutMs(this.deadlineAt) },
     );
     return (response.data.messages ?? []).flatMap((message) => {
-      if (!message.id) return [];
+      if (!message.id || message.labelIds?.includes("DRAFT")) return [];
       const from = displayAddress(header(message, "From")) ?? "";
       const senderAddress = addresses(from)[0] ?? from.toLowerCase();
       const to = addresses(header(message, "To"));
@@ -119,9 +119,12 @@ export class GmailProvider implements MessageProvider {
       const content = bodies(message.payload);
       const occurredAt = new Date(Number(message.internalDate ?? Date.now()));
       if (Number.isNaN(occurredAt.getTime())) return [];
+      const isSent =
+        message.labelIds?.includes("SENT") ||
+        senderAddress === account.address?.toLowerCase();
       return [{
         providerMessageId: message.id,
-        direction: senderAddress === account.address?.toLowerCase() ? "OUTBOUND" as const : "INBOUND" as const,
+        direction: isSent ? "OUTBOUND" as const : "INBOUND" as const,
         sender: from, recipients: [...new Set([...to, ...cc, ...bcc])],
         replyTo: displayAddress(header(message, "Reply-To")),
         subject: header(message, "Subject"),

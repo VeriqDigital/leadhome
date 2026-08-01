@@ -12,6 +12,7 @@ import type {
   NormalizedMessage,
 } from "./provider";
 import { recordActivities, recordActivity } from "@/lib/activity-service";
+import { recordGmailOutboundContactEvidence } from "./outbound-contact-service";
 
 export type ImportSummary = {
   accountsProcessed: number;
@@ -149,6 +150,18 @@ export async function importProviderAccount({
       address: normalizedAccount.address,
     },
   });
+  const ownedMailboxAddresses = provider.provider === "GMAIL"
+    ? await prisma.communicationAccount.findMany({
+        where: {
+          ownerId,
+          provider: "GMAIL",
+          status: "CONNECTED",
+          address: { not: null },
+        },
+        select: { address: true },
+        take: 100,
+      }).then((rows) => rows.map((row) => row.address))
+    : [account.address];
 
   const summary = emptySummary();
   await options?.onProgress?.({
@@ -168,6 +181,7 @@ export async function importProviderAccount({
       summary,
       companyDetectionMode:
         options?.companyDetectionMode ?? "INLINE",
+      ownedMailboxAddresses,
     });
     if (change.messagesCreated > 0) {
       await options?.onConversationChanged?.(change);
@@ -207,6 +221,7 @@ async function importConversation({
   rawMessageCount,
   summary,
   companyDetectionMode,
+  ownedMailboxAddresses,
 }: {
   ownerId: string;
   account: { id: string; address: string | null };
@@ -216,6 +231,7 @@ async function importConversation({
   rawMessageCount: number;
   summary: ImportSummary;
   companyDetectionMode: ConversationCompanyDetectionMode;
+  ownedMailboxAddresses: readonly (string | null)[];
 }) {
   const existing = await prisma.conversation.findUnique({
     where: {
@@ -326,8 +342,8 @@ async function importConversation({
       });
     }
 
-    if (conversation.baselineImportedAt && conversation.leadId && created.count) {
-      const createdMessages = await tx.message.findMany({
+    const createdMessages = created.count
+      ? await tx.message.findMany({
         where: {
           accountId: account.id,
           providerMessageId: {
@@ -336,11 +352,15 @@ async function importConversation({
         },
         select: {
           id: true,
+          providerMessageId: true,
           direction: true,
+          recipients: true,
           subject: true,
           receivedAt: true,
         },
-      });
+      })
+      : [];
+    if (conversation.baselineImportedAt && conversation.leadId && createdMessages.length) {
       await recordActivities(
         tx,
         createdMessages.map((message) => ({
@@ -369,6 +389,27 @@ async function importConversation({
           idempotencyKey: `message:${message.id}:${message.direction}`,
         })),
       );
+    }
+
+    if (
+      provider.provider === "GMAIL" &&
+      !conversation.leadId &&
+      createdMessages.length
+    ) {
+      await recordGmailOutboundContactEvidence(tx, {
+        ownerId,
+        accountId: account.id,
+        conversationId: conversation.id,
+        ownedMailboxAddresses,
+        messages: createdMessages.map((message) => ({
+          ...message,
+          recipients: Array.isArray(message.recipients)
+            ? message.recipients.filter(
+                (recipient): recipient is string => typeof recipient === "string",
+              )
+            : [],
+        })),
+      });
     }
 
     if (!conversation.baselineImportedAt) {

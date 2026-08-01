@@ -84,7 +84,6 @@ function whereFor(
 }
 
 export async function listConversationSummaries(ownerId: string, filters: InboxFilters) {
-  const started = performance.now();
   const attentionIds = filters.attention
     ? await getInboxAttentionConversationIds(ownerId, filters.attention)
     : undefined;
@@ -117,9 +116,6 @@ export async function listConversationSummaries(ownerId: string, filters: InboxF
       },
     },
   });
-  if (process.env.NODE_ENV !== "production") {
-    console.info(`[Inbox] summary query: ${Math.round(performance.now() - started)}ms, ${Math.min(rows.length, INBOX_PAGE_SIZE)} rows`);
-  }
   const hasNext = rows.length > INBOX_PAGE_SIZE;
   const items: ConversationSummaryDto[] = rows.slice(0, INBOX_PAGE_SIZE).map(({ messages, ...row }) => ({
     ...row,
@@ -134,11 +130,11 @@ export async function listConversationSummaries(ownerId: string, filters: InboxF
 }
 
 export async function getConversationDetail(ownerId: string, conversationId: string) {
-  const started = performance.now();
   const row = await prisma.conversation.findFirst({
     where: { id: conversationId, ownerId },
     select: {
-      id: true, provider: true, subject: true, status: true,
+      id: true, provider: true, providerConversationId: true,
+      subject: true, status: true,
       classification: true, reviewState: true, matchKind: true, matchReason: true,
       matchCandidateLeadIds: true, manuallyDetached: true,
       lead: {
@@ -163,8 +159,5 @@ export async function getConversationDetail(ownerId: string, conversationId: str
       },
     },
   });
-  if (process.env.NODE_ENV !== "production") {
-    console.info(`[Inbox] detail query: ${Math.round(performance.now() - started)}ms, ${row?.messages.length ?? 0} messages`);
-  }
   return row;
 }

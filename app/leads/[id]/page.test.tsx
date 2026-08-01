@@ -13,6 +13,9 @@ const activity = vi.hoisted(() => ({
 const navigation = vi.hoisted(() => ({
   notFound: vi.fn(),
 }));
+const gmail = vi.hoisted(() => ({
+  getConnectedGmailAddress: vi.fn(),
+}));
 
 vi.mock("@/lib/prisma", () => ({ prisma: database }));
 vi.mock("@/lib/auth-user", () => ({
@@ -24,8 +27,10 @@ vi.mock("@/lib/activity-service", () => ({
 vi.mock("@/lib/tasks/task-service", () => ({
   isOverdue: vi.fn(() => false),
 }));
+vi.mock("@/lib/gmail/connected-account", () => gmail);
 vi.mock("@/app/actions/lead-actions", () => ({
   deleteLeadAction: vi.fn(),
+  markLeadContactedAction: vi.fn(),
   updateLeadAction: vi.fn(),
 }));
 vi.mock("@/app/actions/task-actions", () => ({
@@ -41,6 +46,7 @@ const leadId = "cm123456789012345678901234";
 const followUp = new Date(2026, 7, 12, 12);
 
 beforeEach(() => {
+  gmail.getConnectedGmailAddress.mockResolvedValue("owner@example.com");
   database.lead.findFirst.mockResolvedValue({
     id: leadId,
     userId: "owner-a",
@@ -103,12 +109,18 @@ describe("lead detail persisted follow-up rendering", () => {
     expect(html).toContain('value="2026-08-12"');
     expect(html).toContain("Call the customer");
     expect(html).toContain("Follow-up scheduled");
+    expect(html).toContain("Contact in Gmail");
+    expect(html).toContain("Mark as contacted");
+    expect(html).toContain("recognized after the next Gmail check");
+    expect(html).toContain("authuser=owner%40example.com");
+    expect(html).toContain("to=lead%40example.com");
     expect(html).toContain('aria-label="Activity history"');
     expect(html).not.toContain('aria-label="Loading activity history"');
     expect(activity.getPage).toHaveBeenCalledWith({
       leadId,
       ownerId: "owner-a",
     });
+    expect(gmail.getConnectedGmailAddress).toHaveBeenCalledWith("owner-a");
     expect(navigation.notFound).not.toHaveBeenCalled();
   });
 

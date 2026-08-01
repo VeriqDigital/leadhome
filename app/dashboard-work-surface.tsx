@@ -20,7 +20,15 @@ const severityStyle = {
 } as const;
 
 function countLabel(category: AttentionCategory) {
+  if (category.count === 0 && category.countIsLowerBound) return "Review";
   return `${category.count}${category.countIsLowerBound ? "+" : ""}`;
+}
+
+function totalLabel(attention: DashboardAttention) {
+  if (attention.totalCount === 0 && attention.totalCountIsLowerBound) {
+    return "Additional records may need review";
+  }
+  return `${attention.totalCount}${attention.totalCountIsLowerBound ? "+" : ""} actionable ${attention.totalCount === 1 ? "item" : "items"}`;
 }
 
 export function NeedsAttention({
@@ -44,7 +52,7 @@ export function NeedsAttention({
         </div>
         {!attention.caughtUp && (
           <p className="text-sm text-[#687080]">
-            {attention.totalCount}{attention.totalCountIsLowerBound ? "+" : ""} actionable {attention.totalCount === 1 ? "item" : "items"}
+            {totalLabel(attention)}
           </p>
         )}
       </div>

@@ -126,7 +126,7 @@ export function CompanySuggestion({
                 }
                 disabled={pending}
                 onClick={() => setSubmittedIntent("APPLY")}
-                className="company-apply-button cursor-pointer rounded-lg border border-transparent bg-[#17181c] px-3 py-2 text-xs font-semibold text-white hover:bg-black disabled:cursor-wait disabled:opacity-60 dark:!bg-[#f4f6fa] dark:!text-[#17181c] dark:hover:!bg-[#dfe3eb]"
+                className="company-apply-button cursor-pointer rounded-lg border border-transparent bg-[#17181c] px-3 py-2 text-xs font-semibold text-white hover:bg-black disabled:cursor-wait disabled:opacity-60"
               >
                 {pending && submittedIntent === "APPLY"
                   ? "Applying…"

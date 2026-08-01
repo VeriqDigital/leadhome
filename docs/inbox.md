@@ -14,17 +14,26 @@ excluded.
 
 Dashboard deep links add three canonical attention filters:
 
-- `attention=awaiting-response` selects active attached lead/customer
-  conversations whose latest stored message is inbound;
+- `attention=awaiting-response` selects active attached conversations
+  classified `LEAD` or `CUSTOMER` whose latest stored message is inbound
+  (`UNKNOWN` is deliberately excluded);
 - `attention=match-review` selects active unattached canonical ambiguous
   matches; and
 - `attention=company-review` selects the bounded set of current visible
   company suggestions returned by the existing company detector.
 
-The Inbox announces the active queue, preserves it through selection and
-pagination, and combines it with existing search and filters. Invalid values
-are ignored. The rules and bounds are documented in
+The Inbox announces the active queue with its exact inclusion rule, preserves
+it through selection and pagination, and combines it with existing search and
+filters. Invalid values are ignored. Awaiting-response and match-review ID sets
+are capped at 500; Dashboard uses the same display cap and marks overflow as a
+lower bound. Company review uses the detector's bounded 100-candidate scan.
+The rules and bounds are documented in
 [Dashboard Needs Attention](./dashboard.md).
+
+Selected Gmail conversations include a **Reply in Gmail** action. It opens the
+exact stored Gmail thread in a new tab and selects the connected mailbox by
+address, where the user can use Gmail's normal reply composer. LeadHome keeps
+its `gmail.readonly` scope and does not compose, send, or modify mail itself.
 
 Pagination currently uses an offset (`page=`) because it keeps combined filters
 and browser navigation straightforward. Queries use stable
@@ -122,6 +131,6 @@ attachment and company state; stale or repeated requests cannot overwrite a
 manual edit or create duplicate activity. Only an actual `Lead.company`
 change emits the existing `COMPANY_CHANGED` event.
 
-In development, bounded query timing and row/message counts are logged on the
-server. `/dev/messages` remains unavailable in production and now shows only
-the newest 20 diagnostic summaries.
+Temporary Inbox query-timing diagnostics used during the milestone audit were
+removed. `/dev/messages` remains unavailable in production and shows only the
+newest 20 diagnostic summaries.

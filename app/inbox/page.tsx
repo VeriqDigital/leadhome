@@ -27,6 +27,7 @@ import { LeadMatchSuggestions } from "./lead-match-suggestions";
 import { conversationMatchPresentation } from "./match-presentation";
 import { getConversationCompanyView } from "@/lib/messaging/company-detection-service";
 import { CompanySuggestion } from "./company-suggestion";
+import { GmailReplyLink } from "./gmail-reply-link";
 import {
   canonicalCompanyLead,
   companyPresentation,
@@ -51,6 +52,14 @@ const attentionLabels = {
   "awaiting-response": "Awaiting response",
   "match-review": "Lead matches",
   "company-review": "Company suggestions",
+} as const;
+const attentionExplanations = {
+  "awaiting-response":
+    "Only open conversations attached to a lead and classified Lead or Customer qualify when their latest message is inbound.",
+  "match-review":
+    "Only open, unattached ambiguous matches that still need a decision are shown.",
+  "company-review":
+    "Only current company suggestions for attached leads with no company are shown.",
 } as const;
 const providers = [
   "GMAIL",
@@ -302,8 +311,9 @@ export default async function InboxPage({
               </Link>
             )}
             {filters.attention && (
-              <p role="status" className="text-xs text-[#687080]">
-                Showing attention queue: {attentionLabels[filters.attention]}.
+              <p role="status" className="text-xs leading-5 text-[#687080]">
+                Showing attention queue: {attentionLabels[filters.attention]}.{" "}
+                {attentionExplanations[filters.attention]}
               </p>
             )}
           </form>
@@ -548,10 +558,17 @@ function ConversationDetail({
               {detail.account.address ?? detail.account.displayName}
             </p>
           </div>
-          <div className="flex flex-wrap gap-1.5 text-xs">
-            <Badge text={label(detail.status)} />
-            <Badge text={label(detail.classification)} />
-            <Badge text={label(detail.reviewState)} />
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <GmailReplyLink
+              provider={detail.provider}
+              providerConversationId={detail.providerConversationId}
+              accountAddress={detail.account.address}
+            />
+            <div className="flex flex-wrap gap-1.5 text-xs">
+              <Badge text={label(detail.status)} />
+              <Badge text={label(detail.classification)} />
+              <Badge text={label(detail.reviewState)} />
+            </div>
           </div>
         </div>
         <p className="mt-3 text-xs text-[#687080]">

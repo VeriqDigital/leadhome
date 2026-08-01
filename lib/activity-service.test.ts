@@ -13,6 +13,7 @@ import {
   getDashboardRecentActivities,
   getLeadActivityPage,
   recordActivity,
+  recordOutboundContactActivities,
 } from "./activity-service";
 
 function client(overrides: Record<string, unknown> = {}) {
@@ -155,6 +156,61 @@ describe("unified activity recording", () => {
       title: "Website lead created",
       idempotencyKey: "website:source-a:key-a",
     })).resolves.toEqual({ created: false });
+  });
+
+  it("allows only the dedicated outbound path to relate an unattached sent message", async () => {
+    const tx = client({
+      conversation: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "conversation-a", leadId: null },
+        ]),
+      },
+      message: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "message-a",
+            conversationId: "conversation-a",
+            direction: "OUTBOUND",
+          },
+        ]),
+      },
+    });
+    await expect(recordOutboundContactActivities(tx as never, [{
+      ownerId: "owner-a",
+      leadId: "lead-a",
+      conversationId: "conversation-a",
+      messageId: "message-a",
+      source: "GMAIL",
+      title: "Email sent",
+      idempotencyKey: "gmail-outbound-contact:test",
+    }])).resolves.toEqual({ count: 1 });
+  });
+
+  it("does not let the dedicated outbound path link an inbound message", async () => {
+    const tx = client({
+      conversation: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: "conversation-a", leadId: null },
+        ]),
+      },
+      message: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: "message-a",
+            conversationId: "conversation-a",
+            direction: "INBOUND",
+          },
+        ]),
+      },
+    });
+    await expect(recordOutboundContactActivities(tx as never, [{
+      ownerId: "owner-a",
+      leadId: "lead-a",
+      conversationId: "conversation-a",
+      messageId: "message-a",
+      source: "GMAIL",
+      title: "Email sent",
+    }])).rejects.toThrow("does not belong to its lead");
   });
 });
 

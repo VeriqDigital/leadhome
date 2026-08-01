@@ -5,7 +5,11 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-user";
 import { getLeadActivityPage } from "@/lib/activity-service";
 import { formatDate, formatDateInputValue } from "@/lib/lead-format";
-import { deleteLeadAction, updateLeadAction } from "../../actions/lead-actions";
+import {
+  deleteLeadAction,
+  markLeadContactedAction,
+  updateLeadAction,
+} from "../../actions/lead-actions";
 import { createTaskAction } from "../../actions/task-actions";
 import { ActivityTimeline } from "../activity-timeline";
 import { DeleteLeadButton } from "../delete-lead-button";
@@ -13,6 +17,9 @@ import { LeadForm } from "../lead-form";
 import { TaskForm } from "../../tasks/task-form";
 import { TaskDue } from "../../tasks/task-due";
 import { isOverdue } from "@/lib/tasks/task-service";
+import { getConnectedGmailAddress } from "@/lib/gmail/connected-account";
+import { GmailComposeLink } from "../gmail-compose-link";
+import { MarkContactedButton } from "../mark-contacted-button";
 export default async function LeadDetailPage({
   params,
 }: {
@@ -25,7 +32,7 @@ export default async function LeadDetailPage({
     Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const lead = await prisma.lead.findFirst({ where: { id, userId: user.id } });
   if (!lead) notFound();
-  const [activityPage, tasks, conversations] = await Promise.all([
+  const [activityPage, tasks, conversations, gmailAddress] = await Promise.all([
     getLeadActivityPage({ leadId: lead.id, ownerId: user.id }),
     prisma.task.findMany({
       where: { ownerId: user.id, leadId: lead.id, status: { not: "CANCELLED" } },
@@ -49,9 +56,11 @@ export default async function LeadDetailPage({
       take: 100,
       select: { id: true, subject: true },
     }),
+    getConnectedGmailAddress(user.id),
   ]);
   const update = updateLeadAction.bind(null, lead.id);
   const remove = deleteLeadAction.bind(null, lead.id);
+  const markContacted = markLeadContactedAction.bind(null, lead.id);
   return (
     <div className="mx-auto max-w-315">
       <Link
@@ -72,8 +81,28 @@ export default async function LeadDetailPage({
                 Created {formatDate(lead.createdAt)}
               </p>
             </div>
-            <DeleteLeadButton action={remove} />
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {lead.email ? (
+                <GmailComposeLink
+                  recipient={lead.email}
+                  leadName={lead.name}
+                  accountAddress={gmailAddress}
+                  label="Contact in Gmail"
+                />
+              ) : (
+                <span className="text-xs text-[#687080]">
+                  Add an email to contact in Gmail
+                </span>
+              )}
+              <MarkContactedButton action={markContacted} />
+              <DeleteLeadButton action={remove} />
+            </div>
           </div>
+          {lead.email ? (
+            <p className="-mt-5 mb-7 text-xs text-[#687080]">
+              Gmail opens in a new tab. Sent email is recognized after the next Gmail check.
+            </p>
+          ) : null}
           <LeadForm
             action={update}
             submitLabel="Save changes"

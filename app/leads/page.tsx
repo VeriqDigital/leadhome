@@ -18,6 +18,8 @@ import {
 import { PageHeader } from "../page-header";
 import { StatusBadge } from "../components";
 import { StatusFilter } from "./status-filter";
+import { GmailComposeLink } from "./gmail-compose-link";
+import { getConnectedGmailAddress } from "@/lib/gmail/connected-account";
 
 export default async function LeadsPage({
   searchParams,
@@ -27,7 +29,10 @@ export default async function LeadsPage({
   const user = await requireUser();
   const params = await searchParams;
   const { args, status, sort, page, attention } = buildLeadsQuery(user.id, params);
-  const rows = await prisma.lead.findMany(args);
+  const [rows, gmailAddress] = await Promise.all([
+    prisma.lead.findMany(args),
+    getConnectedGmailAddress(user.id),
+  ]);
   const hasNext = rows.length > LEADS_PAGE_SIZE;
   const leads = rows.slice(0, LEADS_PAGE_SIZE);
   const pageHref = (nextPage: number) => {
@@ -47,7 +52,7 @@ export default async function LeadsPage({
         action={
           <Link
             href="/leads/new"
-            className="inline-flex h-11 items-center gap-2 rounded-xl bg-[#17181c] px-4 text-sm font-semibold text-white"
+            className="action-primary inline-flex h-11 items-center gap-2 rounded-xl border border-transparent px-4 text-sm font-semibold"
           >
             <Plus className="size-4" />
             New Lead
@@ -90,6 +95,9 @@ export default async function LeadsPage({
             Showing new leads with no recorded outbound contact.
           </p>
         )}
+        <p className="mb-5 text-xs text-[#687080]">
+          Email opens Gmail in a new tab. Sent email is recognized after the next Gmail check.
+        </p>
         {leads.length ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-175 text-left">
@@ -101,6 +109,7 @@ export default async function LeadsPage({
                   <th className="pb-3 font-medium">Value</th>
                   <th className="pb-3 font-medium">Created</th>
                   <th className="pb-3 font-medium">Last Updated</th>
+                  <th className="pb-3 text-right font-medium">Contact</th>
                 </tr>
               </thead>
               <tbody>
@@ -137,6 +146,19 @@ export default async function LeadsPage({
                     <td className="py-4 text-sm text-[#687080]">
                       {formatDate(lead.updatedAt)}
                     </td>
+                    <td className="py-4 text-right">
+                      {lead.email ? (
+                        <GmailComposeLink
+                          recipient={lead.email}
+                          leadName={lead.name}
+                          accountAddress={gmailAddress}
+                          label="Email"
+                          compact
+                        />
+                      ) : (
+                        <span className="text-xs text-[#687080]">No email</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -154,7 +176,7 @@ export default async function LeadsPage({
               </p>
               <Link
                 href="/leads/new"
-                className="mt-5 inline-flex items-center gap-2 rounded-xl bg-[#17181c] px-4 py-2.5 text-sm font-semibold text-white"
+                className="action-primary mt-5 inline-flex items-center gap-2 rounded-xl border border-transparent px-4 py-2.5 text-sm font-semibold"
               >
                 <Plus className="size-4" />
                 Create lead

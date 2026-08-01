@@ -3,6 +3,7 @@ import "server-only";
 import { Prisma, type Prisma as PrismaTypes } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { reportOperationalError } from "@/lib/server-errors";
+import { taskViewWhere } from "@/lib/tasks/task-service";
 import {
   getConversationCompanyView,
   type ConversationCompanyView,
@@ -10,6 +11,7 @@ import {
 
 export const ATTENTION_SAMPLE_SIZE = 4;
 export const TODAY_WORK_LIMIT = 8;
+export const INBOX_ATTENTION_LIMIT = 500;
 export const COMPANY_REVIEW_SCAN_LIMIT = 100;
 const COMPANY_REVIEW_CONCURRENCY = 5;
 
@@ -131,6 +133,7 @@ function companyReviewCandidateWhere(
     lead: { is: { userId: ownerId, company: null } },
     status: "OPEN",
     reviewState: { notIn: ["IGNORED", "RESOLVED"] },
+    messages: { some: { ownerId, direction: "INBOUND" } },
   };
 }
 
@@ -142,7 +145,7 @@ async function awaitingResponseRows(
     SELECT
       c."id",
       c."subject",
-      COALESCE(c."lastMessageAt", latest."receivedAt") AS "lastMessageAt",
+      latest."receivedAt" AS "lastMessageAt",
       l."id" AS "leadId",
       l."name" AS "leadName",
       l."company",
@@ -170,7 +173,7 @@ async function awaitingResponseRows(
         'CUSTOMER'::"ConversationClassification"
       )
       AND latest."direction" = 'INBOUND'::"MessageDirection"
-    ORDER BY COALESCE(c."lastMessageAt", latest."receivedAt") ASC, c."id" ASC
+    ORDER BY latest."receivedAt" ASC, c."id" ASC
     LIMIT ${take}
   `);
 }
@@ -182,8 +185,8 @@ async function companyReviewItems(
   const candidates = await prisma.conversation.findMany({
     where: companyReviewCandidateWhere(ownerId),
     orderBy: [
-      { lastMessageAt: { sort: "desc", nulls: "last" } },
-      { id: "desc" },
+      { lastMessageAt: { sort: "asc", nulls: "last" } },
+      { id: "asc" },
     ],
     take: take + 1,
     select: { id: true, subject: true, lastMessageAt: true },
@@ -241,7 +244,9 @@ export async function getInboxAttentionConversationIds(
   filter: InboxAttentionFilter,
 ) {
   if (filter === "awaiting-response") {
-    return (await awaitingResponseRows(ownerId, 500)).map((row) => row.id);
+    return (
+      await awaitingResponseRows(ownerId, INBOX_ATTENTION_LIMIT)
+    ).map((row) => row.id);
   }
   if (filter === "match-review") {
     const rows = await prisma.conversation.findMany({
@@ -250,7 +255,7 @@ export async function getInboxAttentionConversationIds(
         { lastMessageAt: { sort: "desc", nulls: "last" } },
         { id: "desc" },
       ],
-      take: 500,
+      take: INBOX_ATTENTION_LIMIT,
       select: { id: true },
     });
     return rows.map((row) => row.id);
@@ -271,6 +276,10 @@ export async function getDashboardAttention(
   startOfToday.setHours(0, 0, 0, 0);
   const endOfToday = new Date(startOfToday);
   endOfToday.setDate(endOfToday.getDate() + 1);
+  const overdueWhere = {
+    ownerId,
+    ...taskViewWhere("overdue", now),
+  };
 
   const [
     awaiting,
@@ -283,9 +292,7 @@ export async function getDashboardAttention(
     company,
   ] = await Promise.all([
     awaitingResponseRows(ownerId, ATTENTION_SAMPLE_SIZE),
-    prisma.task.count({
-      where: { ownerId, status: "OPEN", dueAt: { lt: now } },
-    }),
+    prisma.task.count({ where: overdueWhere }),
     prisma.task.findMany({
       where: { ownerId, status: "OPEN", dueAt: { lt: endOfToday } },
       orderBy: [{ dueAt: "asc" }, { id: "asc" }],
@@ -325,15 +332,17 @@ export async function getDashboardAttention(
     companyReviewItems(ownerId),
   ]);
 
-  const awaitingCount = countFromRows(awaiting);
+  const awaitingTotal = countFromRows(awaiting);
+  const awaitingCount = Math.min(awaitingTotal, INBOX_ATTENTION_LIMIT);
+  const matchReviewCount = Math.min(matchCount, INBOX_ATTENTION_LIMIT);
   const companyCount = company.items.length;
   const categories: AttentionCategory[] = [
     {
       key: "AWAITING_RESPONSE",
       title: "Customers waiting for a reply",
-      explanation: "Active customer conversations whose latest message is inbound.",
+      explanation: "Open Lead or Customer conversations whose latest message is inbound.",
       count: awaitingCount,
-      countIsLowerBound: false,
+      countIsLowerBound: awaitingTotal > INBOX_ATTENTION_LIMIT,
       severity: "urgent",
       href: "/inbox?attention=awaiting-response",
       actionLabel: "Open Inbox",
@@ -362,8 +371,8 @@ export async function getDashboardAttention(
       key: "MATCH_REVIEW",
       title: "Lead matches need review",
       explanation: "Active possible matches waiting for a decision.",
-      count: matchCount,
-      countIsLowerBound: false,
+      count: matchReviewCount,
+      countIsLowerBound: matchCount > INBOX_ATTENTION_LIMIT,
       severity: "normal",
       href: "/inbox?attention=match-review",
       actionLabel: "Review matches",
@@ -380,9 +389,10 @@ export async function getDashboardAttention(
     },
   ];
 
-  const workItems: DashboardWorkItem[] = [
+  const workCandidates: Array<DashboardWorkItem & { entityKey: string }> = [
     ...awaiting.slice(0, 2).map((row) => ({
       id: `reply:${row.id}`,
+      entityKey: `conversation:${row.id}`,
       category: "AWAITING_RESPONSE" as const,
       title: row.leadName,
       action: "Reply to customer",
@@ -392,6 +402,7 @@ export async function getDashboardAttention(
     })),
     ...actionableTasks.slice(0, 2).map((task) => ({
       id: `task:${task.id}`,
+      entityKey: `task:${task.id}`,
       category: "OVERDUE_WORK" as const,
       title: task.title,
       action: task.dueAt && task.dueAt < now
@@ -407,6 +418,7 @@ export async function getDashboardAttention(
     })),
     ...untouchedLeads.slice(0, 2).map((lead) => ({
       id: `lead:${lead.id}`,
+      entityKey: `lead:${lead.id}`,
       category: "UNTOUCHED_LEADS" as const,
       title: lead.name,
       action: "Contact new lead",
@@ -416,6 +428,7 @@ export async function getDashboardAttention(
     })),
     ...matches.slice(0, 1).map((conversation) => ({
       id: `match:${conversation.id}`,
+      entityKey: `conversation:${conversation.id}`,
       category: "MATCH_REVIEW" as const,
       title: conversation.subject ?? "Conversation without a subject",
       action: "Review possible lead match",
@@ -425,6 +438,7 @@ export async function getDashboardAttention(
     })),
     ...company.items.slice(0, 1).map((conversation) => ({
       id: `company:${conversation.id}`,
+      entityKey: `conversation:${conversation.id}`,
       category: "COMPANY_REVIEW" as const,
       title: conversation.view.lead?.name ?? "Attached lead",
       action: "Review company suggestion",
@@ -435,7 +449,13 @@ export async function getDashboardAttention(
       relevantAt: conversation.lastMessageAt ?? now,
       href: `/inbox?attention=company-review&conversation=${encodeURIComponent(conversation.id)}`,
     })),
-  ].slice(0, TODAY_WORK_LIMIT);
+  ];
+  const seenEntities = new Set<string>();
+  const workItems = workCandidates.flatMap(({ entityKey, ...item }) => {
+    if (seenEntities.has(entityKey)) return [];
+    seenEntities.add(entityKey);
+    return [item];
+  }).slice(0, TODAY_WORK_LIMIT);
 
   const totalCount = categories.reduce(
     (total, category) => total + category.count,

@@ -80,6 +80,25 @@ describe("dashboard work surface", () => {
     );
   });
 
+  it("does not show a false zero count for a lower-bounded queue", () => {
+    const bounded = attention();
+    bounded.categories = bounded.categories.map((category) => ({
+      ...category,
+      count: 0,
+      countIsLowerBound: category.key === "AWAITING_RESPONSE",
+    }));
+    bounded.totalCount = 0;
+    bounded.totalCountIsLowerBound = true;
+    bounded.caughtUp = false;
+
+    const markup = renderToStaticMarkup(<NeedsAttention attention={bounded} />);
+
+    expect(markup).toContain("Additional records may need review");
+    expect(markup).toContain(">Review</span>");
+    expect(markup).not.toContain("0+ actionable items");
+    expect(markup).not.toContain("You are caught up");
+  });
+
   it("renders a bounded direct-record Today's Work list", () => {
     const markup = renderToStaticMarkup(
       <TodaysWork attention={attention()} now={now} />,

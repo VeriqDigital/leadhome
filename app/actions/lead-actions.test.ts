@@ -52,6 +52,7 @@ vi.mock("next/navigation", () => ({
 import {
   createLeadAction,
   deleteLeadAction,
+  markLeadContactedAction,
   updateLeadAction,
 } from "@/app/actions/lead-actions";
 
@@ -394,6 +395,49 @@ describe("lead action activity transactions", () => {
     await expect(updateLeadAction(leadId, {}, form({ status: "WON" })))
       .resolves.toEqual({ message: "Lead not found." });
     expect(mocks.updateLead).not.toHaveBeenCalled();
+    expect(mocks.createActivities).not.toHaveBeenCalled();
+  });
+
+  it("marks an owned lead contacted idempotently without fabricating messages", async () => {
+    mocks.createActivities
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
+
+    await expect(markLeadContactedAction(leadId, {}, new FormData()))
+      .resolves.toEqual({
+        success: true,
+        changed: true,
+        message: "Lead marked as contacted.",
+      });
+    await expect(markLeadContactedAction(leadId, {}, new FormData()))
+      .resolves.toEqual({
+        success: true,
+        changed: false,
+        message: "Contact was already recorded.",
+      });
+    expect(mocks.createActivities).toHaveBeenCalledWith({
+      data: [expect.objectContaining({
+        userId: "user-a",
+        leadId,
+        conversationId: null,
+        messageId: null,
+        type: "MESSAGE_SENT",
+        actorType: "USER",
+        source: "MANUAL",
+        idempotencyKey: `manual-contact:${leadId}`,
+      })],
+      skipDuplicates: true,
+    });
+    expect(mocks.updateLead).not.toHaveBeenCalled();
+    expect(mocks.updateLeads).not.toHaveBeenCalled();
+    expect(mocks.updateConversations).not.toHaveBeenCalled();
+    expect(mocks.transaction.mock.calls.at(-1)?.[0]).toBeTypeOf("function");
+  });
+
+  it("cannot manually mark another owner's lead contacted", async () => {
+    mocks.findLead.mockResolvedValue(null);
+    await expect(markLeadContactedAction(leadId, {}, new FormData()))
+      .resolves.toEqual({ message: "Lead not found." });
     expect(mocks.createActivities).not.toHaveBeenCalled();
   });
 

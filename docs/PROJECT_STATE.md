@@ -1,9 +1,10 @@
 # LeadHome Project State
 
 This document is the current implementation snapshot for future development.
-The Unified Activity Timeline, Smart Lead Matching, and Automatic Company
-Detection and Dashboard Needs Attention are implemented and verified. Contact
-Extraction remains the next planned milestone.
+The Unified Activity Timeline, Smart Lead Matching, Automatic Company
+Detection, and the stabilized Dashboard Needs Attention milestone are
+implemented and verified. Contact Extraction is the recommended next planned
+milestone; it has not started.
 
 ## Product Overview
 
@@ -269,11 +270,12 @@ Authenticated users see an action-first daily work surface. One centralized,
 owner-scoped service ranks customer replies awaiting response, overdue open
 tasks, untouched `NEW` leads, active ambiguous lead matches, and canonical
 visible company suggestions. Needs Attention links to URL-filtered destination
-pages, Today's Work contains at most eight direct record links, and Business
-Health keeps pipeline metrics, stage distribution, and five recent meaningful
-activities visually secondary. Loading and category/secondary failures are
-isolated and announced. Exact rules and bounds live in
-[Dashboard Needs Attention](./dashboard.md).
+pages, Today's Work contains at most eight deduplicated direct record links,
+and Business Health keeps pipeline metrics, stage distribution, and five
+recent meaningful activities visually secondary. Awaiting response includes
+only `LEAD` and `CUSTOMER` classifications; `UNKNOWN` is excluded. Loading and
+category/secondary failures are isolated and announced. Exact rules and bounds
+live in [Dashboard Needs Attention](./dashboard.md).
 
 ### Leads
 
@@ -683,8 +685,9 @@ Before its final Gmail durable-job handoff, Automatic Company Detection passed
 24.18.0; the separately gated OpenAI smoke test remained skipped (86 files /
 525 tests including that skip). On the complete implementation, Prisma
 format/validate/generate, TypeScript, full ESLint, and `git diff --check`
-passed. The expanded job-focused/full suites and Node 24 production build
-remain the final verification gate. Migration
+passed. The final Dashboard stabilization regression and full-suite runs also
+cover its job, presentation, and owner-isolation paths, and the Node 24
+production build passes. Migration
 `20260729210000_add_company_suggestion_dismissals` is additive and covered by
 the schema/migration regression set.
 

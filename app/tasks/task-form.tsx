@@ -207,7 +207,7 @@ export function TaskForm({
       <div className="flex items-center gap-3">
         <button
           disabled={pending}
-          className="cursor-pointer rounded-xl bg-[#17181c] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60 dark:bg-white dark:text-[#17181c]"
+          className="action-primary cursor-pointer rounded-xl border border-transparent px-4 py-2.5 text-sm font-semibold disabled:opacity-60"
         >
           {pending ? "Saving…" : submitLabel}
         </button>
