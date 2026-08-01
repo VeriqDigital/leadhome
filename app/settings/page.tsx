@@ -10,9 +10,18 @@ import { listRecentJobs } from "@/lib/jobs/service";
 import { conversationAnalysisConfigurationStatus } from "@/lib/ai/config";
 import { latestSuccessfulConversationAnalysisAt } from "@/lib/ai/conversation-analysis/job-service";
 import { ConversationIntelligenceSettings } from "./conversation-intelligence-settings";
+import { GmailOAuthFeedback } from "./gmail-oauth-feedback";
 
-export default async function SettingsPage() {
+export default async function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ gmail?: string | string[] }>;
+}) {
   const user = await requireUser();
+  const gmailResultValue = (await searchParams).gmail;
+  const gmailResult = Array.isArray(gmailResultValue)
+    ? gmailResultValue[0]
+    : gmailResultValue;
   const requestHeaders = await headers();
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
   const protocol =
@@ -111,6 +120,7 @@ export default async function SettingsPage() {
           />
         </div>
         <div className="border-t border-black/[0.07] pt-8">
+          <GmailOAuthFeedback result={gmailResult} />
           <GmailIntegrations accounts={gmailAccountsWithJobs} />
         </div>
         <div className="border-t border-black/[0.07] pt-8">

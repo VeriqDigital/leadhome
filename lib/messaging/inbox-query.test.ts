@@ -9,7 +9,11 @@ import {
 const database = vi.hoisted(() => ({
   conversation: { findMany: vi.fn(), findFirst: vi.fn() },
 }));
+const attention = vi.hoisted(() => ({
+  getInboxAttentionConversationIds: vi.fn(),
+}));
 vi.mock("@/lib/prisma", () => ({ prisma: database }));
+vi.mock("@/lib/dashboard/attention", () => attention);
 
 const row = (id: string, date: Date | null, messageDate = date ?? new Date()) => ({
   id, provider: "GMAIL", subject: `Subject ${id}`, status: "OPEN",
@@ -20,7 +24,10 @@ const row = (id: string, date: Date | null, messageDate = date ?? new Date()) =>
 });
 
 describe("inbox queries", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    attention.getInboxAttentionConversationIds.mockResolvedValue([]);
+  });
 
   it("requests only one bounded page with a narrow latest-message selection", async () => {
     database.conversation.findMany.mockResolvedValue([row("one", new Date())]);
@@ -105,6 +112,29 @@ describe("inbox queries", () => {
       ownerId: "owner-a", reviewState: "NEEDS_REVIEW", classification: "LEAD",
       status: "OPEN", provider: "GMAIL", leadId: { not: null },
     }));
+  });
+
+  it("applies bookmarkable attention IDs without weakening owner scope", async () => {
+    attention.getInboxAttentionConversationIds.mockResolvedValue([
+      "conversation-a",
+    ]);
+    database.conversation.findMany.mockResolvedValue([]);
+
+    await listConversationSummaries("owner-a", {
+      page: 1,
+      attention: "awaiting-response",
+    });
+
+    expect(attention.getInboxAttentionConversationIds).toHaveBeenCalledWith(
+      "owner-a",
+      "awaiting-response",
+    );
+    expect(database.conversation.findMany.mock.calls[0][0].where).toEqual(
+      expect.objectContaining({
+        ownerId: "owner-a",
+        id: { in: ["conversation-a"] },
+      }),
+    );
   });
 
   it("owner-scopes detail and orders only its messages chronologically", async () => {

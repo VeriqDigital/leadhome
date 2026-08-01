@@ -59,8 +59,7 @@ describe("leads query", () => {
       page: "3",
     });
     expect(result.args.where).toEqual(expect.objectContaining({
-      userId: "owner-a",
-      status: "CONTACTED",
+      AND: [{ userId: "owner-a" }, { status: "CONTACTED" }],
       OR: expect.arrayContaining([
         { name: { contains: "Acme", mode: "insensitive" } },
       ]),
@@ -76,8 +75,40 @@ describe("leads query", () => {
       sort: "not-a-sort",
       page: "-1",
     });
-    expect(result.args.where).toEqual({ userId: "owner-b", status: undefined });
+    expect(result.args.where).toEqual({
+      AND: [{ userId: "owner-b" }, {}],
+    });
     expect(result.sort).toBe("updated-desc");
     expect(result.page).toBe(1);
+  });
+
+  it("combines the untouched attention filter with search and owner scope", () => {
+    const result = buildLeadsQuery("owner-a", {
+      attention: "untouched",
+      q: "Acme",
+      page: "2",
+    });
+
+    expect(result.attention).toBe("untouched");
+    expect(result.args.where).toEqual(
+      expect.objectContaining({
+        AND: [
+          expect.objectContaining({ userId: "owner-a", status: "NEW" }),
+          {},
+        ],
+        OR: expect.arrayContaining([
+          { company: { contains: "Acme", mode: "insensitive" } },
+        ]),
+      }),
+    );
+    expect(result.args.skip).toBe(LEADS_PAGE_SIZE);
+  });
+
+  it("fails closed to the normal owner-scoped query for invalid attention", () => {
+    const result = buildLeadsQuery("owner-b", { attention: "invalid" });
+    expect(result.attention).toBeUndefined();
+    expect(result.args.where).toEqual({
+      AND: [{ userId: "owner-b" }, {}],
+    });
   });
 });

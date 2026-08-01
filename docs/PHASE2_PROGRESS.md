@@ -2,44 +2,61 @@
 
 ## Current Milestone
 
-Automatic Company Detection is the current Phase 2 implementation milestone.
-It extends the existing attachment and Conversation Intelligence workflows
-with one conservative, explainable company-detection boundary. It does not add
-a `Company` entity, competing company field, second queue, or LLM request.
+Dashboard Needs Attention is the current Phase 2 implementation milestone. It
+turns the existing dashboard from a statistics-first collection of cards into
+an owner-scoped daily work surface derived from canonical CRM state.
 
-The implementation is intentionally incremental:
+The implementation is intentionally deterministic:
 
-- `Lead.company` remains the only company representation;
-- one unambiguous company already associated with the same recognized business
-  domain may fill a blank company automatically;
-- AI and domain-formatted candidates require explicit review;
-- existing attachments, companies, dismissals, and concurrent manual decisions
-  always override automation.
+- no attention or notification records are persisted;
+- no new AI calls or priority scores are introduced;
+- Inbox, Leads, and Tasks deep links reuse their canonical state; and
+- action queues remain bounded and owner-scoped.
 
 ## Milestone Status
 
-**Implementation complete; final runtime validation pending.**
+**Complete.**
 
-The feature and additive migration are implemented. The core detector, Inbox,
-activity, attachment, and analysis integration passed its focused and full
-regression runs. After the final Gmail non-blocking durable-job integration,
-Prisma format/validate/generate, TypeScript, full ESLint, and
-`git diff --check` passed. The expanded focused/full tests and Node 24
-production build still need one final run before this milestone is marked
-complete.
+The centralized attention service, action-first dashboard, destination
+filters, focused regression coverage, documentation, and one supporting index
+migration are implemented and validated.
 
 ## Phase 2 Roadmap
 
 - [x] Unified Activity Timeline
 - [x] Smart Lead Matching
-- [ ] Automatic Company Detection
+- [x] Automatic Company Detection
 - [ ] Contact Extraction
 - [ ] Inbox Prioritization
-- [ ] Dashboard Needs Attention
+- [x] Dashboard Needs Attention
 - [ ] AI Buying Signal Detection
 - [ ] Follow-up Detection
 - [ ] Notification Center
 - [ ] Automation Rules Engine
+
+## Dashboard Needs Attention
+
+The dashboard now renders **Needs Attention**, **Today's Work**, then
+**Business Health**. Five ordered deterministic categories cover active
+customer replies whose latest message is inbound, overdue open tasks, untouched
+`NEW` leads, active ambiguous lead matches, and canonical visible company
+suggestions. Operational job failures are excluded because they are not
+consistently user-actionable.
+
+Deep links use `/inbox?attention=...`, `/leads?attention=untouched`, and the
+existing `/tasks?view=overdue`. The Inbox and Leads pages preserve and explain
+their URL-backed attention state. The dashboard work list is capped at eight,
+company review scans at most 100 current candidates through the existing
+detector, and Inbox attention ID sets cap at 500. Migration
+`20260731210000_add_message_conversation_time_index` supports latest-message
+lookups without changing message history.
+
+Recent Leads and the three independent dashboard task cards were replaced by
+the bounded record-level work list. Pipeline value, active opportunities, wins,
+new-stage volume, pipeline distribution, and five recent activities remain
+below the action surface. See [Dashboard Needs Attention](./dashboard.md) for
+exact inclusion, exclusion, ordering, bounds, failure behavior, and deferred
+signals.
 
 Contact Extraction and the later attention/automation features remain separate
 future milestones. Automatic Company Detection does not alter Smart Lead
@@ -344,6 +361,26 @@ island, disabled the faulty development React debug channel, aligned Node with
 Vercel 24.x, and removed the polling worker's accumulated abort listeners.
 
 ## Verification
+
+Dashboard Needs Attention passed its final validation on Node 24.18.0:
+
+- the focused dashboard, attention, destination-filter, task, pipeline,
+  activity, and schema set passed 10 files / 60 tests;
+- the full suite passed 91 files / 561 tests, with only the explicitly gated
+  OpenAI smoke test skipped;
+- Prisma format, validate, and client generation passed;
+- migration status correctly reports the new
+  `20260731210000_add_message_conversation_time_index` migration as pending
+  deployment to the configured database;
+- TypeScript and full ESLint passed;
+- the Next.js 16.2.11 production build passed under Node 24.18.0 and generated
+  all 18 static pages; and
+- `git diff --check` passed.
+
+Browser-authenticated manual verification remains for real user records and
+responsive visual review after the new migration is deployed. Automated tests
+cover information order, accessible links, zero/loading/error states, exact
+query rules, bounds, and destination URL preservation.
 
 The prior Smart Lead Matching verification, including manual-detach recovery
 and canonical presentation stabilization, passed on Node 24.18.0:

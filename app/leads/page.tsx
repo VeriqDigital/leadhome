@@ -26,13 +26,14 @@ export default async function LeadsPage({
 }) {
   const user = await requireUser();
   const params = await searchParams;
-  const { args, status, sort, page } = buildLeadsQuery(user.id, params);
+  const { args, status, sort, page, attention } = buildLeadsQuery(user.id, params);
   const rows = await prisma.lead.findMany(args);
   const hasNext = rows.length > LEADS_PAGE_SIZE;
   const leads = rows.slice(0, LEADS_PAGE_SIZE);
   const pageHref = (nextPage: number) => {
     const query = new URLSearchParams();
     if (params.q) query.set("q", params.q);
+    if (attention) query.set("attention", attention);
     if (status) query.set("status", status);
     if (sort !== "updated-desc") query.set("sort", sort);
     if (nextPage > 1) query.set("page", String(nextPage));
@@ -55,6 +56,7 @@ export default async function LeadsPage({
       />
       <section className="dashboard-card mt-9 rounded-2xl border border-black/5.5 bg-white p-6 shadow-[0_8px_30px_rgba(23,24,28,0.035)]">
         <form className="mb-6 flex flex-col gap-3 sm:flex-row">
+          {attention && <input type="hidden" name="attention" value={attention} />}
           <label className="relative flex-1">
             <Search className="absolute left-3.5 top-3 size-4 text-[#687080]" />
             <input
@@ -83,6 +85,11 @@ export default async function LeadsPage({
             Apply filters
           </button>
         </form>
+        {attention === "untouched" && (
+          <p role="status" className="mb-5 border-l-2 border-amber-500 pl-3 text-sm text-[#687080]">
+            Showing new leads with no recorded outbound contact.
+          </p>
+        )}
         {leads.length ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-175 text-left">

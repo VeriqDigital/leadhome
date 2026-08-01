@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { Bell, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import Link from "next/link";
 function greetingForHour(hour: number) {
   if (hour >= 4 && hour < 12) return "Good morning";
@@ -21,24 +21,17 @@ export function Header({
           {greetingForHour(hour)}, {name.split(" ")[0]}.
         </h1>
         <p className="mt-1.5 text-sm text-[#687080]">
-          Here&apos;s what&apos;s happening with your leads today.
+          Here is what needs your attention today.
         </p>
       </div>
       <div className="flex items-center gap-3">
         <Link
           href="/leads/new"
-          className="hidden h-11 items-center gap-2 rounded-[10px] bg-[#17181c] px-5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-black sm:flex"
+          className="hidden h-11 items-center gap-2 rounded-[10px] bg-[#17181c] px-5 text-sm font-medium text-white shadow-sm transition-colors hover:bg-black sm:flex dark:bg-white dark:text-[#17181c] dark:hover:bg-[#e5e7eb]"
         >
           <Plus className="size-4" />
           New Lead
         </Link>
-        <button
-          aria-label="Notifications"
-          className="relative grid size-11 place-items-center rounded-xl transition-colors hover:bg-white"
-        >
-          <Bell className="size-5" />
-          <span className="absolute right-2 top-2 size-1.5 rounded-full bg-[#17181c] ring-2 ring-[#f7f7f5]" />
-        </button>
       </div>
     </header>
   );

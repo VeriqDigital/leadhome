@@ -1,34 +1,25 @@
+import { Suspense } from "react";
 import Link from "next/link";
-import {
-  CalendarClock,
-  CircleDollarSign,
-  TrendingUp,
-  UserRoundPlus,
-  UsersRound,
-} from "lucide-react";
 import type { LeadStatus } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/auth-user";
+import { getDashboardAttention } from "@/lib/dashboard/attention";
+import { getDashboardLeadMetrics } from "@/lib/pipeline/dashboard-metrics";
+import { ACTIVE_PIPELINE_STATUSES } from "@/lib/pipeline/metrics";
+import { getDashboardRecentActivities } from "@/lib/activity-service";
+import { reportOperationalError } from "@/lib/server-errors";
 import {
   formatCurrency,
-  formatRelativeTime,
-  sourceLabels,
   statusLabels,
   statusValues,
 } from "@/lib/lead-format";
-import { getDashboardLeadMetrics } from "@/lib/pipeline/dashboard-metrics";
-import {
-  DashboardCard,
-  Header,
-  MetricCard,
-  PipelineRow,
-  SmallAction,
-} from "./components";
-import { RecentLeads, type RecentLead } from "./recent-leads";
-import { completeTaskAction } from "./actions/task-actions";
-import { TaskDue } from "./tasks/task-due";
-import { getDashboardRecentActivities } from "@/lib/activity-service";
+import { Header, PipelineRow } from "./components";
 import { RecentActivity } from "./recent-activity";
+import {
+  AttentionError,
+  DashboardLoading,
+  NeedsAttention,
+  TodaysWork,
+} from "./dashboard-work-surface";
 
 const colors: Record<LeadStatus, string> = {
   NEW: "#8c83d9",
@@ -39,174 +30,120 @@ const colors: Record<LeadStatus, string> = {
   WON: "#66ad76",
   LOST: "#9ca3af",
 };
+
 export default async function Home() {
   const user = await requireUser();
-  const now = new Date();
-  const startOfToday = new Date(now);
-  startOfToday.setHours(0, 0, 0, 0);
-  const endOfToday = new Date(startOfToday);
-  endOfToday.setDate(endOfToday.getDate() + 1);
-  const taskSelect = {
-    id: true,
-    title: true,
-    dueAt: true,
-    lead: { select: { id: true, name: true } },
-  } as const;
-  const [
-    recent,
-    leadMetrics,
-    overdueTasks,
-    todayTasks,
-    upcomingTasks,
-    recentActivity,
-  ] =
-    await Promise.all([
-      prisma.lead.findMany({
-        where: { userId: user.id },
-        orderBy: { createdAt: "desc" },
-        take: 10,
-      }),
-      getDashboardLeadMetrics(user.id, now),
-      prisma.task.findMany({
-        where: { ownerId: user.id, status: "OPEN", dueAt: { lt: startOfToday } },
-        orderBy: [{ dueAt: "asc" }, { id: "asc" }],
-        take: 5,
-        select: taskSelect,
-      }),
-      prisma.task.findMany({
-        where: {
-          ownerId: user.id,
-          status: "OPEN",
-          dueAt: { gte: startOfToday, lt: endOfToday },
-        },
-        orderBy: [{ dueAt: "asc" }, { id: "asc" }],
-        take: 5,
-        select: taskSelect,
-      }),
-      prisma.task.findMany({
-        where: { ownerId: user.id, status: "OPEN", dueAt: { gte: endOfToday } },
-        orderBy: [{ dueAt: "asc" }, { id: "asc" }],
-        take: 5,
-        select: taskSelect,
-      }),
-      getDashboardRecentActivities(user.id),
-    ]);
-  const {
-    newCount,
-    followUpCount,
-    wonThisWeek,
-    pipelineValue,
-    grouped,
-  } = leadMetrics;
-  const counts = Object.fromEntries(
-    grouped.map((row) => [row.status, row._count]),
-  ) as Partial<Record<LeadStatus, number>>;
-  const maximum = Math.max(1, ...Object.values(counts));
-  const metrics = [
-    {
-      label: "New Leads",
-      value: String(newCount),
-      trend: "Live",
-      period: "in your pipeline",
-      icon: UserRoundPlus,
-      tone: "neutral",
-    },
-    {
-      label: "Needs Follow-up",
-      value: String(followUpCount),
-      trend: "Live",
-      period: "requiring attention",
-      icon: CalendarClock,
-      tone: "neutral",
-    },
-    {
-      label: "Won This Week",
-      value: String(wonThisWeek),
-      trend: "Live",
-      period: "updated this week",
-      icon: TrendingUp,
-      tone: "green",
-    },
-    {
-      label: "Pipeline Value",
-      value: formatCurrency(pipelineValue._sum.estimatedValue?.toString() ?? 0),
-      trend: "Live",
-      period: "open opportunities",
-      icon: CircleDollarSign,
-      tone: "neutral",
-    },
-  ];
-  const recentLeads: RecentLead[] = recent.map((lead) => ({
-    id: lead.id,
-    initials: lead.name
-      .split(" ")
-      .map((part) => part[0])
-      .join("")
-      .slice(0, 2)
-      .toUpperCase(),
-    name: lead.name,
-    source: sourceLabels[lead.source],
-    time: formatRelativeTime(lead.createdAt),
-    status: statusLabels[lead.status],
-    message: lead.message || lead.company || "No notes added.",
-  }));
-
   return (
     <div className="mx-auto max-w-315">
       <Header name={user.name ?? "there"} hour={new Date().getHours()} />
-      <section
-        aria-label="Lead metrics"
-        className="mt-9 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"
-      >
-        {metrics.map((metric) => (
-          <MetricCard key={metric.label} {...metric} />
-        ))}
-      </section>
-      <div className="mt-5 grid items-start gap-5 xl:grid-cols-[minmax(0,2.08fr)_minmax(300px,1fr)]">
-        <div className="grid gap-5">
-          <DashboardCard
-            title="Recent Leads"
-            action={
-              <Link href="/leads">
-                <SmallAction>View all leads</SmallAction>
-              </Link>
-            }
-          >
-            {recent.length ? (
-              <RecentLeads leads={recentLeads} />
-            ) : (
-              <div className="grid min-h-72 place-items-center px-6 text-center">
-                <div>
-                  <UsersRound className="mx-auto size-8 text-[#9297a1]" />
-                  <h3 className="mt-4 font-semibold">
-                    Your leads will live here
-                  </h3>
-                  <p className="mt-1 text-sm text-[#687080]">
-                    Add your first lead to start building your pipeline.
-                  </p>
-                  <Link
-                    href="/leads/new"
-                    className="mt-5 inline-flex rounded-xl bg-[#17181c] px-4 py-2.5 text-sm font-semibold text-white"
-                  >
-                    Create your first lead
-                  </Link>
-                </div>
-              </div>
-            )}
-          </DashboardCard>
-          <DashboardCard
-            title="Due Today"
-            action={<Link href="/tasks?view=today" className="text-xs text-[#606775]">View all</Link>}
-          >
-            <DashboardTasks tasks={todayTasks} now={now} empty="No tasks due today." />
-          </DashboardCard>
-          <DashboardCard title="Recent Activity">
-            <RecentActivity activities={recentActivity} now={now} />
-          </DashboardCard>
+      <Suspense fallback={<DashboardLoading />}>
+        <DashboardContent ownerId={user.id} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function DashboardContent({ ownerId }: { ownerId: string }) {
+  const now = new Date();
+  const [attention, leadMetrics, recentActivity] = await Promise.all([
+    getDashboardAttention(ownerId, now).catch((error) => {
+      reportOperationalError("dashboard attention query failed", error);
+      return null;
+    }),
+    getDashboardLeadMetrics(ownerId, now).catch((error) => {
+      reportOperationalError("dashboard business health query failed", error);
+      return null;
+    }),
+    getDashboardRecentActivities(ownerId, 5).catch((error) => {
+      reportOperationalError("dashboard recent activity query failed", error);
+      return null;
+    }),
+  ]);
+
+  return (
+    <div className="dashboard-work-surface">
+      {attention ? (
+        <>
+          <NeedsAttention attention={attention} />
+          <TodaysWork attention={attention} now={now} />
+        </>
+      ) : (
+        <AttentionError />
+      )}
+      <BusinessHealth metrics={leadMetrics} activities={recentActivity} now={now} />
+    </div>
+  );
+}
+
+function BusinessHealth({
+  metrics,
+  activities,
+  now,
+}: {
+  metrics: Awaited<ReturnType<typeof getDashboardLeadMetrics>> | null;
+  activities: Awaited<ReturnType<typeof getDashboardRecentActivities>> | null;
+  now: Date;
+}) {
+  const counts = Object.fromEntries(
+    (metrics?.grouped ?? []).map((row) => [row.status, row._count]),
+  ) as Partial<Record<LeadStatus, number>>;
+  const maximum = Math.max(1, ...Object.values(counts));
+  const activeCount = ACTIVE_PIPELINE_STATUSES.reduce(
+    (total, status) => total + (counts[status] ?? 0),
+    0,
+  );
+  const health = metrics
+    ? [
+        {
+          label: "Open pipeline",
+          value: formatCurrency(
+            metrics.pipelineValue._sum.estimatedValue?.toString() ?? 0,
+          ),
+        },
+        { label: "Active opportunities", value: String(activeCount) },
+        { label: "Won this week", value: String(metrics.wonThisWeek) },
+        { label: "New-stage leads", value: String(metrics.newCount) },
+      ]
+    : [];
+
+  return (
+    <section aria-labelledby="business-health-heading" className="mt-14 border-t border-black/10 pt-6 dark:border-white/10">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 id="business-health-heading" className="text-xl font-semibold tracking-[-0.025em]">
+            Business health
+          </h2>
+          <p className="mt-1 text-sm text-[#687080]">
+            Pipeline context and the latest meaningful changes.
+          </p>
         </div>
-        <div className="grid gap-5">
-          <DashboardCard title="Pipeline Overview">
-            <ul className="space-y-6 px-6 py-6">
+        <Link href="/pipeline" className="text-sm font-semibold underline underline-offset-4">
+          Open pipeline
+        </Link>
+      </div>
+
+      {metrics ? (
+        <dl className="mt-6 grid border-y border-black/10 sm:grid-cols-2 xl:grid-cols-4 dark:border-white/10">
+          {health.map((item) => (
+            <div key={item.label} className="border-b border-black/[0.07] py-5 sm:px-5 sm:first:pl-0 sm:[&:nth-child(odd)]:border-r xl:border-b-0 xl:border-r xl:last:border-r-0 dark:border-white/[0.07]">
+              <dt className="text-xs font-medium uppercase tracking-[0.08em] text-[#687080]">{item.label}</dt>
+              <dd className="mt-2 text-2xl font-semibold tracking-[-0.04em]">{item.value}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p role="status" className="mt-6 border-y border-black/10 py-5 text-sm text-[#687080] dark:border-white/10">
+          Business metrics are temporarily unavailable.
+        </p>
+      )}
+
+      <div className="mt-8 grid gap-10 xl:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+        <section aria-labelledby="pipeline-distribution-heading">
+          <h3 id="pipeline-distribution-heading" className="text-sm font-semibold uppercase tracking-[0.08em] text-[#687080]">
+            Pipeline distribution
+          </h3>
+          {metrics ? (
+            <ul className="mt-5 space-y-5">
               {statusValues.map((status) => (
                 <PipelineRow
                   key={status}
@@ -217,69 +154,26 @@ export default async function Home() {
                 />
               ))}
             </ul>
-          </DashboardCard>
-          <DashboardCard
-            title="Overdue Tasks"
-            action={<Link href="/tasks?view=overdue" className="text-xs text-[#606775]">View all</Link>}
-          >
-            <DashboardTasks tasks={overdueTasks} now={now} empty="No overdue tasks." />
-          </DashboardCard>
-          <DashboardCard
-            title="Upcoming Tasks"
-            action={<Link href="/tasks?view=upcoming" className="text-xs text-[#606775]">View all</Link>}
-          >
-            <DashboardTasks tasks={upcomingTasks} now={now} empty="No upcoming tasks." />
-          </DashboardCard>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function DashboardTasks({
-  tasks,
-  now,
-  empty,
-}: {
-  tasks: {
-    id: string;
-    title: string;
-    dueAt: Date | null;
-    lead: { id: string; name: string } | null;
-  }[];
-  now: Date;
-  empty: string;
-}) {
-  if (!tasks.length) {
-    return <p className="px-6 py-8 text-center text-sm text-[#687080]">{empty}</p>;
-  }
-  return (
-    <ul className="divide-y divide-black/[0.07] px-6">
-      {tasks.map((task) => (
-        <li key={task.id} className="flex min-h-18 items-center gap-3 py-3">
-          <div className="min-w-0">
-            <Link href={`/tasks/${task.id}/edit`} className="block truncate text-[13px] font-semibold hover:underline">
-              {task.title}
+          ) : (
+            <p className="mt-5 text-sm text-[#687080]">Pipeline distribution is unavailable.</p>
+          )}
+        </section>
+        <section aria-labelledby="recent-activity-heading" className="xl:border-l xl:border-black/10 xl:pl-8 dark:xl:border-white/10">
+          <div className="flex items-center justify-between gap-3">
+            <h3 id="recent-activity-heading" className="text-sm font-semibold uppercase tracking-[0.08em] text-[#687080]">
+              What changed
+            </h3>
+            <Link href="/leads" className="text-xs font-semibold underline underline-offset-4">
+              View leads
             </Link>
-            <p className="mt-1 truncate text-xs text-[#687080]">
-              {task.lead?.name ?? "Standalone task"}
-            </p>
           </div>
-          <span className="ml-auto shrink-0 text-xs">
-            <TaskDue
-              dueAt={task.dueAt?.toISOString() ?? null}
-              overdue={Boolean(task.dueAt && task.dueAt < now)}
-            />
-          </span>
-          <form action={completeTaskAction}>
-            <input type="hidden" name="taskId" value={task.id} />
-            <button
-              aria-label={`Complete ${task.title}`}
-              className="size-5 cursor-pointer rounded-[5px] border border-[#b9bdc4] hover:bg-[#edf6ee]"
-            />
-          </form>
-        </li>
-      ))}
-    </ul>
+          {activities ? (
+            <RecentActivity activities={activities} now={now} />
+          ) : (
+            <p role="status" className="mt-5 text-sm text-[#687080]">Recent activity is temporarily unavailable.</p>
+          )}
+        </section>
+      </div>
+    </section>
   );
 }

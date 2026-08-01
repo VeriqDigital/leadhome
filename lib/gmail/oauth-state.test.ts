@@ -5,17 +5,24 @@ const mocks = vi.hoisted(() => ({
   findFirst: vi.fn(),
   create: vi.fn(),
   transaction: vi.fn(),
+  findUnique: vi.fn(),
+  updateMany: vi.fn(),
 }));
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     $transaction: mocks.transaction,
+    oAuthState: {
+      findUnique: mocks.findUnique,
+      updateMany: mocks.updateMany,
+    },
   },
 }));
 
 import {
   OAUTH_INITIATION_DUPLICATE_WINDOW_MS,
   beginOAuthState,
+  consumeOAuthState,
 } from "./oauth-state";
 
 beforeEach(() => {
@@ -24,6 +31,8 @@ beforeEach(() => {
   mocks.executeRaw.mockResolvedValue(1);
   mocks.findFirst.mockResolvedValue(null);
   mocks.create.mockResolvedValue({ id: "state-a" });
+  mocks.findUnique.mockResolvedValue(null);
+  mocks.updateMany.mockResolvedValue({ count: 1 });
   mocks.transaction.mockImplementation(async (operation) =>
     operation({
       $executeRaw: mocks.executeRaw,
@@ -80,5 +89,49 @@ describe("Gmail OAuth initiation state", () => {
       kind: "duplicate",
     });
     expect(mocks.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("Gmail OAuth callback state consumption", () => {
+  it("returns a stable missing-state result without attempting consumption", async () => {
+    await expect(
+      consumeOAuthState(
+        "missing-state",
+        "owner-a",
+        "gmail-connect",
+        new Date("2026-07-29T18:05:00.000Z"),
+      ),
+    ).resolves.toEqual({
+      kind: "invalid",
+      reasonCode: "state_not_found",
+      stateExisted: false,
+    });
+    expect(mocks.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("returns a stable expired-state result without consuming it", async () => {
+    const now = new Date("2026-07-29T18:11:00.000Z");
+    mocks.findUnique.mockResolvedValueOnce({
+      id: "state-a",
+      tokenHash: expect.any(String),
+      userId: "owner-a",
+      purpose: "gmail-connect",
+      expiresAt: new Date("2026-07-29T18:10:00.000Z"),
+      usedAt: null,
+    });
+
+    const result = await consumeOAuthState(
+      "expired-state",
+      "owner-a",
+      "gmail-connect",
+      now,
+    );
+
+    expect(result).toEqual({
+      kind: "invalid",
+      reasonCode: "state_expired",
+      stateExisted: true,
+    });
+    expect(mocks.updateMany).not.toHaveBeenCalled();
   });
 });

@@ -1,5 +1,10 @@
 import type { Prisma } from "@prisma/client";
 import { isLeadStatus } from "@/lib/lead-format";
+import {
+  parseLeadAttention,
+  untouchedLeadWhere,
+  type LeadAttentionFilter,
+} from "@/lib/dashboard/attention";
 
 export const LEADS_PAGE_SIZE = 25;
 
@@ -20,6 +25,7 @@ export type LeadsSearchParams = {
   status?: string;
   sort?: string;
   page?: string;
+  attention?: string;
 };
 
 export function parseLeadSort(value: string | undefined): LeadSort {
@@ -62,6 +68,7 @@ export function buildLeadsQuery(
   const query = params.q?.trim().slice(0, 100);
   const status = isLeadStatus(params.status) ? params.status : undefined;
   const sort = parseLeadSort(params.sort);
+  const attention = parseLeadAttention(params.attention);
   const requestedPage = Number(params.page);
   const page =
     Number.isSafeInteger(requestedPage) && requestedPage > 0
@@ -74,8 +81,12 @@ export function buildLeadsQuery(
     page,
     args: {
       where: {
-        userId: ownerId,
-        status,
+        AND: [
+          attention === "untouched"
+            ? untouchedLeadWhere(ownerId)
+            : { userId: ownerId },
+          status ? { status } : {},
+        ],
         ...(query
           ? {
               OR: [
@@ -90,5 +101,6 @@ export function buildLeadsQuery(
       skip: (page - 1) * LEADS_PAGE_SIZE,
       take: LEADS_PAGE_SIZE + 1,
     } satisfies Prisma.LeadFindManyArgs,
+    attention: attention as LeadAttentionFilter | undefined,
   };
 }

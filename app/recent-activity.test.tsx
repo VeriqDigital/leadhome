@@ -101,10 +101,10 @@ describe("dashboard recent activity", () => {
       "utf8",
     );
 
-    expect(dashboard).toContain("getDashboardRecentActivities(user.id)");
-    expect(dashboard).toContain('title="Recent Activity"');
+    expect(dashboard).toContain("getDashboardRecentActivities(ownerId, 5)");
+    expect(dashboard).toContain("What changed");
     expect(dashboard).toContain(
-      "<RecentActivity activities={recentActivity} now={now} />",
+      "<RecentActivity activities={activities} now={now} />",
     );
   });
 });

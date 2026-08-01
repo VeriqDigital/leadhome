@@ -306,6 +306,7 @@ model Message {
   @@unique([accountId, providerMessageId])
   @@index([ownerId, receivedAt])
   @@index([ownerId, externalSubmissionId])
+  @@index([conversationId, receivedAt, id])
 }
 
 model Task {

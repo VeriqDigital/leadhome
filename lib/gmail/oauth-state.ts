@@ -9,6 +9,22 @@ export const OAUTH_INITIATION_DUPLICATE_WINDOW_MS = 15_000;
 const hash = (value: string) =>
   createHmac("sha256", process.env.AUTH_SECRET ?? "").update(value).digest("hex");
 
+export type OAuthStateFailureReason =
+  | "state_not_found"
+  | "state_already_used"
+  | "state_owner_mismatch"
+  | "state_purpose_mismatch"
+  | "state_expired"
+  | "state_hash_mismatch";
+
+export type OAuthStateConsumptionResult =
+  | { kind: "consumed"; stateExisted: true }
+  | {
+      kind: "invalid";
+      reasonCode: OAuthStateFailureReason;
+      stateExisted: boolean;
+    };
+
 export async function beginOAuthState(
   userId: string,
   purpose = "gmail-connect",
@@ -54,16 +70,66 @@ export async function beginOAuthState(
   });
 }
 
-export async function consumeOAuthState(value: string, userId: string, purpose = "gmail-connect") {
+export async function consumeOAuthState(
+  value: string,
+  userId: string,
+  purpose = "gmail-connect",
+  now = new Date(),
+): Promise<OAuthStateConsumptionResult> {
   const expected = hash(value);
   const state = await prisma.oAuthState.findUnique({ where: { tokenHash: expected } });
-  if (!state || state.usedAt || state.userId !== userId || state.purpose !== purpose || state.expiresAt <= new Date()) {
-    throw new Error("This authorization request is invalid, expired, or already used.");
+  if (!state) {
+    return {
+      kind: "invalid",
+      reasonCode: "state_not_found",
+      stateExisted: false,
+    };
   }
-  if (!timingSafeEqual(Buffer.from(state.tokenHash), Buffer.from(expected))) throw new Error("Invalid OAuth state.");
+  if (state.usedAt) {
+    return {
+      kind: "invalid",
+      reasonCode: "state_already_used",
+      stateExisted: true,
+    };
+  }
+  if (state.userId !== userId) {
+    return {
+      kind: "invalid",
+      reasonCode: "state_owner_mismatch",
+      stateExisted: true,
+    };
+  }
+  if (state.purpose !== purpose) {
+    return {
+      kind: "invalid",
+      reasonCode: "state_purpose_mismatch",
+      stateExisted: true,
+    };
+  }
+  if (state.expiresAt <= now) {
+    return {
+      kind: "invalid",
+      reasonCode: "state_expired",
+      stateExisted: true,
+    };
+  }
+  if (!timingSafeEqual(Buffer.from(state.tokenHash), Buffer.from(expected))) {
+    return {
+      kind: "invalid",
+      reasonCode: "state_hash_mismatch",
+      stateExisted: true,
+    };
+  }
   const consumed = await prisma.oAuthState.updateMany({
     where: { id: state.id, usedAt: null },
-    data: { usedAt: new Date() },
+    data: { usedAt: now },
   });
-  if (consumed.count !== 1) throw new Error("This authorization request was already used.");
+  if (consumed.count !== 1) {
+    return {
+      kind: "invalid",
+      reasonCode: "state_already_used",
+      stateExisted: true,
+    };
+  }
+  return { kind: "consumed", stateExisted: true };
 }

@@ -12,6 +12,20 @@ Search, filters, pagination, and selection are URL-backed. Search covers
 subject, sender, and attached lead name/email; message bodies are deliberately
 excluded.
 
+Dashboard deep links add three canonical attention filters:
+
+- `attention=awaiting-response` selects active attached lead/customer
+  conversations whose latest stored message is inbound;
+- `attention=match-review` selects active unattached canonical ambiguous
+  matches; and
+- `attention=company-review` selects the bounded set of current visible
+  company suggestions returned by the existing company detector.
+
+The Inbox announces the active queue, preserves it through selection and
+pagination, and combines it with existing search and filters. Invalid values
+are ignored. The rules and bounds are documented in
+[Dashboard Needs Attention](./dashboard.md).
+
 Pagination currently uses an offset (`page=`) because it keeps combined filters
 and browser navigation straightforward. Queries use stable
 `lastMessageAt DESC NULLS LAST, id DESC` ordering. The importer advances

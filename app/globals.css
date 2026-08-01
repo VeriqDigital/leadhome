@@ -34,6 +34,8 @@ button:not(:disabled):hover {
 
 .dark { color-scheme: dark; --background: #111216; --foreground: #ececef; }
 .dark .dashboard-main { background: #111216; }
+.dark .dashboard-main [class*="text-[#687080]"] { color: #aeb3bd; }
+.dark .dashboard-work-surface [class*="bg-[#e9eaec]"] { background: #30323a; }
 .dark .dashboard-card,
 .dark .metric-card { background: #1a1b20; border-color: rgba(255,255,255,.08); box-shadow: none; }
 .dark .dashboard-card > header { border-color: rgba(255,255,255,.08); }

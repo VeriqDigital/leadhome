@@ -1,10 +1,9 @@
 # LeadHome Project State
 
 This document is the current implementation snapshot for future development.
-The Unified Activity Timeline, its later stabilization work, and Smart Lead
-Matching are implemented and verified. Automatic Company Detection is
-implemented and awaiting its final post-job-integration runtime validation;
-Contact Extraction remains the next planned milestone after that gate.
+The Unified Activity Timeline, Smart Lead Matching, and Automatic Company
+Detection and Dashboard Needs Attention are implemented and verified. Contact
+Extraction remains the next planned milestone.
 
 ## Product Overview
 
@@ -76,6 +75,7 @@ other channels, but those adapters are not implemented.
   - [Tasks and follow-ups](./tasks.md)
   - [Pipeline board](./pipeline.md)
   - [Unified lead activity](./lead-activity-timeline.md)
+  - [Dashboard Needs Attention](./dashboard.md)
 - `test/` provides the test replacement for the `server-only` module.
 - `public/` contains static assets, while root configuration files define
   Next.js, TypeScript, Tailwind/PostCSS, ESLint, Vitest, Auth.js, and proxy
@@ -265,16 +265,21 @@ count returns to zero after every completed delay.
 
 ### Dashboard
 
-Authenticated users see current lead metrics, recent leads, pipeline stage
-counts, overdue/due-today/upcoming tasks, and a compact Recent Activity list.
-Recent Activity uses a bounded meaningful-type allowlist and links to the most
-useful surviving lead, conversation, or task. It is chronological, not an
-attention score.
+Authenticated users see an action-first daily work surface. One centralized,
+owner-scoped service ranks customer replies awaiting response, overdue open
+tasks, untouched `NEW` leads, active ambiguous lead matches, and canonical
+visible company suggestions. Needs Attention links to URL-filtered destination
+pages, Today's Work contains at most eight direct record links, and Business
+Health keeps pipeline metrics, stage distribution, and five recent meaningful
+activities visually secondary. Loading and category/secondary failures are
+isolated and announced. Exact rules and bounds live in
+[Dashboard Needs Attention](./dashboard.md).
 
 ### Leads
 
 Users can create, view, edit, and delete owned leads. The Leads page supports
-search, status filtering, URL-backed pagination, and sorting by update time,
+search, status filtering, the URL-backed `attention=untouched` view,
+pagination, and sorting by update time,
 creation time, estimated value with nulls last, or name. The detail page
 includes editable CRM fields, linked tasks, a follow-up form, and the unified
 timeline. Editable lead fields keep local draft state, while the derived
@@ -296,6 +301,9 @@ choose-another, dismiss, and explicit per-conversation **Recheck matches**
 controls. A manually detached conversation keeps its automatic-matching block
 but now exposes an owner-scoped **Allow matching again** action that clears only
 that suppression and immediately runs the same bounded matcher.
+The Inbox also accepts bookmarkable `attention=awaiting-response`,
+`attention=match-review`, and `attention=company-review` views and announces
+the active queue without replacing its existing filters.
 
 Imports are normalized behind a provider interface, preserve user-owned
 conversation fields, deduplicate accounts/conversations/messages, maintain
@@ -729,7 +737,7 @@ Public or paid readiness is blocked by production queue monitoring/alerting,
 the current daily queue latency, Google public-app review, broader end-to-end
 and real-database testing,
 account-recovery/security features, and operational monitoring. The product
-also lacks team administration, billing, and the notification/attention
+also lacks team administration, billing, notifications, and automation
 workflows expected for broader self-service use.
 
 ## Current Phase 2 Priorities
@@ -738,14 +746,16 @@ workflows expected for broader self-service use.
 - [x] **Smart Lead Matching** — centralized automatic/suggested matching,
   dismissal suppression, bounded recheck, owner isolation, and final
   verification are complete.
-- [ ] **Automatic Company Detection** — centralized conservative domain
+- [x] **Automatic Company Detection** — centralized conservative domain
   association, reviewed AI/domain suggestions, dismissal/recheck safety,
   canonical owner-scoped application, and durable Gmail follow-up are
-  implemented; the final runtime validation gate remains.
+  implemented and verified.
 - [ ] **Contact Extraction** — AI may suggest contact details, but extraction
   is not an applied CRM workflow.
 - [ ] **Inbox Prioritization**
-- [ ] **Dashboard Needs Attention**
+- [x] **Dashboard Needs Attention** — five deterministic owner-scoped queues,
+  bounded direct-record work, URL-backed destination filters, secondary
+  business health, and final validation are complete.
 - [ ] **AI Buying Signal Detection**
 - [ ] **Follow-up Detection**
 - [ ] **Notification Center**

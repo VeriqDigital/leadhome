@@ -9,6 +9,10 @@ import type {
   Prisma,
 } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import {
+  getInboxAttentionConversationIds,
+  type InboxAttentionFilter,
+} from "@/lib/dashboard/attention";
 
 export const INBOX_PAGE_SIZE = 25;
 
@@ -19,6 +23,7 @@ export type InboxFilters = {
   status?: ConversationStatus;
   provider?: MessageProvider;
   attachment?: "attached" | "unattached";
+  attention?: InboxAttentionFilter;
   page: number;
 };
 
@@ -51,7 +56,11 @@ export function conversationMessageDate(
   return conversation.lastMessageAt ?? conversation.latestMessage?.receivedAt ?? null;
 }
 
-function whereFor(ownerId: string, filters: InboxFilters): Prisma.ConversationWhereInput {
+function whereFor(
+  ownerId: string,
+  filters: InboxFilters,
+  attentionIds?: string[],
+): Prisma.ConversationWhereInput {
   const query = filters.query?.trim().slice(0, 100);
   return {
     ownerId,
@@ -59,6 +68,7 @@ function whereFor(ownerId: string, filters: InboxFilters): Prisma.ConversationWh
     classification: filters.classification,
     status: filters.status,
     provider: filters.provider,
+    id: attentionIds ? { in: attentionIds } : undefined,
     leadId: filters.attachment === "attached" ? { not: null } : filters.attachment === "unattached" ? null : undefined,
     ...(query ? {
       OR: [
@@ -75,7 +85,10 @@ function whereFor(ownerId: string, filters: InboxFilters): Prisma.ConversationWh
 
 export async function listConversationSummaries(ownerId: string, filters: InboxFilters) {
   const started = performance.now();
-  const where = whereFor(ownerId, filters);
+  const attentionIds = filters.attention
+    ? await getInboxAttentionConversationIds(ownerId, filters.attention)
+    : undefined;
+  const where = whereFor(ownerId, filters, attentionIds);
   const skip = (filters.page - 1) * INBOX_PAGE_SIZE;
   const rows = await prisma.conversation.findMany({
     where,

@@ -249,8 +249,8 @@ describe("Smart Lead Match Inbox UI", () => {
     expect(source).toContain(
       "conversationMatchPresentation({",
     );
-    expect(source).toContain(
-      "{presentation.badge && <Badge text={presentation.badge}/>",
+    expect(source).toMatch(
+      /\{presentation\.badge && <Badge text=\{presentation\.badge\}\s*\/>/,
     );
     expect(source).not.toContain("reevaluateConversationLeadMatch(");
     expect(source).not.toContain("dismissConversationLeadMatch(");
