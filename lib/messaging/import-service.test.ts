@@ -18,6 +18,8 @@ const state = vi.hoisted(() => ({
 const matchMock = vi.hoisted(() => vi.fn());
 const enqueueAnalysisMock = vi.hoisted(() => vi.fn());
 const outboundContactMock = vi.hoisted(() => vi.fn());
+const advanceContactMock = vi.hoisted(() => vi.fn());
+const reconcileContactMock = vi.hoisted(() => vi.fn());
 
 function noMatchResult(): LeadMatchResult {
   return {
@@ -251,6 +253,10 @@ vi.mock("@/lib/ai/conversation-analysis/job-service", () => ({
 vi.mock("./outbound-contact-service", () => ({
   recordGmailOutboundContactEvidence: outboundContactMock,
 }));
+vi.mock("@/lib/pipeline/status-service", () => ({
+  advanceNewLeadToContactedInTransaction: advanceContactMock,
+  reconcileContactedLeadStatuses: reconcileContactMock,
+}));
 vi.mock("./matching-service", async () => {
   const actual = await vi.importActual<typeof import("./matching-service")>(
     "./matching-service",
@@ -326,6 +332,8 @@ beforeEach(() => {
   matchMock.mockResolvedValue(noMatchResult());
   enqueueAnalysisMock.mockResolvedValue(undefined);
   outboundContactMock.mockResolvedValue({ created: 0 });
+  advanceContactMock.mockResolvedValue({ kind: "changed" });
+  reconcileContactMock.mockResolvedValue({ changed: 0, hasMore: false });
 });
 
 describe("provider import pipeline", () => {
@@ -423,6 +431,7 @@ describe("provider import pipeline", () => {
 
     await importProviderAccount({ ownerId: "owner-a", provider });
     expect(outboundContactMock).toHaveBeenCalledOnce();
+    expect(reconcileContactMock).toHaveBeenCalledWith("owner-a");
     expect(outboundContactMock).toHaveBeenCalledWith(
       database,
       expect.objectContaining({
@@ -661,6 +670,31 @@ describe("provider import pipeline", () => {
         ),
       }),
     );
+  });
+
+  it("advances a New attached lead after a newly imported Gmail send", async () => {
+    const provider = new MutableProvider("GMAIL");
+    matchMock.mockResolvedValue(matchedResult("lead-a"));
+    await importProviderAccount({ ownerId: "owner-a", provider });
+    advanceContactMock.mockClear();
+    outboundContactMock.mockClear();
+    provider.messages.get("thread-a")!.push({
+      providerMessageId: "gmail-outbound-new",
+      direction: "OUTBOUND",
+      sender: "inbox@example.com",
+      recipients: ["person@example.com"],
+      subject: "Following up",
+      occurredAt: new Date("2026-08-01T12:00:00.000Z"),
+    });
+
+    await importProviderAccount({ ownerId: "owner-a", provider });
+    expect(advanceContactMock).toHaveBeenCalledWith(database, {
+      ownerId: "owner-a",
+      leadId: "lead-a",
+      actorType: "SYSTEM",
+      source: "GMAIL",
+    });
+    expect(outboundContactMock).not.toHaveBeenCalled();
   });
 
   it("remains duplicate-safe when two imports start together", async () => {

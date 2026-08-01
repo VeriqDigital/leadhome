@@ -15,7 +15,9 @@ const database = vi.hoisted(() => ({
         : null),
     findMany: vi.fn(async ({ where }: any) =>
       state.lead?.userId === where.userId &&
-      where.id.in.includes(state.lead.id)
+      (where.status === "NEW"
+        ? state.lead.status === "NEW"
+        : where.id.in.includes(state.lead.id))
         ? [{ id: state.lead.id }]
         : []),
     updateMany: vi.fn(async ({ where, data }: any) => {
@@ -51,7 +53,11 @@ vi.mock("@/lib/prisma", () => ({
   },
 }));
 
-const { moveLeadStatus } = await import("./status-service");
+const {
+  advanceNewLeadToContactedInTransaction,
+  moveLeadStatus,
+  reconcileContactedLeadStatuses,
+} = await import("./status-service");
 
 beforeEach(() => {
   state.lead = {
@@ -116,5 +122,38 @@ describe("pipeline status mutation", () => {
       await moveLeadStatus("owner-a", state.lead.id, "FOLLOW_UP"),
     ).toEqual(expect.objectContaining({ kind: "changed" }));
     expect(state.activities).toHaveLength(2);
+  });
+
+  it("advances only New leads using the supplied contact provenance", async () => {
+    await expect(advanceNewLeadToContactedInTransaction(database as never, {
+      ownerId: "owner-a",
+      leadId: state.lead.id,
+      actorType: "SYSTEM",
+      source: "GMAIL",
+    })).resolves.toEqual(expect.objectContaining({ kind: "changed" }));
+    expect(state.activities).toContainEqual(expect.objectContaining({
+      type: "STATUS_CHANGED",
+      actorType: "SYSTEM",
+      source: "GMAIL",
+    }));
+
+    state.lead.status = "WON";
+    state.activities.length = 0;
+    await expect(advanceNewLeadToContactedInTransaction(database as never, {
+      ownerId: "owner-a",
+      leadId: state.lead.id,
+    })).resolves.toEqual(expect.objectContaining({ kind: "unchanged" }));
+    expect(state.lead.status).toBe("WON");
+    expect(state.activities).toHaveLength(0);
+  });
+
+  it("reconciles previously recorded contact evidence on the next Gmail sync", async () => {
+    await expect(reconcileContactedLeadStatuses("owner-a"))
+      .resolves.toEqual({ changed: 1, hasMore: false });
+    expect(state.lead.status).toBe("CONTACTED");
+    expect(state.activities).toContainEqual(expect.objectContaining({
+      type: "STATUS_CHANGED",
+      source: "SYSTEM",
+    }));
   });
 });

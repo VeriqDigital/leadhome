@@ -13,6 +13,10 @@ import type {
 } from "./provider";
 import { recordActivities, recordActivity } from "@/lib/activity-service";
 import { recordGmailOutboundContactEvidence } from "./outbound-contact-service";
+import {
+  advanceNewLeadToContactedInTransaction,
+  reconcileContactedLeadStatuses,
+} from "@/lib/pipeline/status-service";
 
 export type ImportSummary = {
   accountsProcessed: number;
@@ -192,6 +196,10 @@ export async function importProviderAccount({
       total: fetched.length,
       message: "Importing and matching conversations.",
     });
+  }
+
+  if (provider.provider === "GMAIL") {
+    await reconcileContactedLeadStatuses(ownerId);
   }
 
   await options?.onProgress?.({
@@ -389,6 +397,17 @@ async function importConversation({
           idempotencyKey: `message:${message.id}:${message.direction}`,
         })),
       );
+      if (
+        provider.provider === "GMAIL" &&
+        createdMessages.some((message) => message.direction === "OUTBOUND")
+      ) {
+        await advanceNewLeadToContactedInTransaction(tx, {
+          ownerId,
+          leadId: conversation.leadId,
+          actorType: "SYSTEM",
+          source: "GMAIL",
+        });
+      }
     }
 
     if (

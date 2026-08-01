@@ -94,7 +94,9 @@ export default async function LeadDetailPage({
                   Add an email to contact in Gmail
                 </span>
               )}
-              <MarkContactedButton action={markContacted} />
+              {lead.status === "NEW" ? (
+                <MarkContactedButton action={markContacted} />
+              ) : null}
               <DeleteLeadButton action={remove} />
             </div>
           </div>

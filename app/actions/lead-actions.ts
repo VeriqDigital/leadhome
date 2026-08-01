@@ -13,7 +13,10 @@ import {
 } from "@/lib/validation";
 import type { CanonicalLead } from "@/lib/lead-types";
 import { reportOperationalError } from "@/lib/server-errors";
-import { changeLeadStatusInTransaction } from "@/lib/pipeline/status-service";
+import {
+  advanceNewLeadToContactedInTransaction,
+  changeLeadStatusInTransaction,
+} from "@/lib/pipeline/status-service";
 import { recordActivities, recordActivity } from "@/lib/activity-service";
 import { formatDateInputValue } from "@/lib/lead-format";
 
@@ -228,7 +231,7 @@ export async function markLeadContactedAction(
     const result = await prisma.$transaction(async (tx) => {
       const lead = await tx.lead.findFirst({
         where: { id, userId: user.id },
-        select: { id: true },
+        select: { id: true, status: true },
       });
       if (!lead) return { kind: "not-found" as const };
       const activity = await recordActivity(tx, {
@@ -241,14 +244,23 @@ export async function markLeadContactedAction(
         description: "Contact recorded manually",
         idempotencyKey: `manual-contact:${lead.id}`,
       });
-      return { kind: "saved" as const, created: activity.created };
+      const status = await advanceNewLeadToContactedInTransaction(tx, {
+        ownerId: user.id,
+        leadId: lead.id,
+        actorType: "USER",
+        source: "MANUAL",
+      });
+      return {
+        kind: "saved" as const,
+        changed: activity.created || status.kind === "changed",
+      };
     });
     if (result.kind === "not-found") return { message: "Lead not found." };
     revalidateLead(id);
     return {
       success: true,
-      changed: result.created,
-      message: result.created
+      changed: result.changed,
+      message: result.changed
         ? "Lead marked as contacted."
         : "Contact was already recorded.",
     };

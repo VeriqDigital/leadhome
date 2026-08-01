@@ -110,7 +110,7 @@ describe("lead detail persisted follow-up rendering", () => {
     expect(html).toContain("Call the customer");
     expect(html).toContain("Follow-up scheduled");
     expect(html).toContain("Contact in Gmail");
-    expect(html).toContain("Mark as contacted");
+    expect(html).not.toContain("Mark as contacted");
     expect(html).toContain("recognized after the next Gmail check");
     expect(html).toContain("authuser=owner%40example.com");
     expect(html).toContain("to=lead%40example.com");
@@ -122,6 +122,14 @@ describe("lead detail persisted follow-up rendering", () => {
     });
     expect(gmail.getConnectedGmailAddress).toHaveBeenCalledWith("owner-a");
     expect(navigation.notFound).not.toHaveBeenCalled();
+  });
+
+  it("shows manual contact only while the lead is still New", async () => {
+    database.lead.findFirst.mockResolvedValue({
+      ...(await database.lead.findFirst()),
+      status: "NEW",
+    });
+    expect(await renderPage()).toContain("Mark as contacted");
   });
 
   it("is read-only across repeated renders and has no automatic refresh lifecycle", async () => {

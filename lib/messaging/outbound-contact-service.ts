@@ -3,12 +3,10 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { recordOutboundContactActivities } from "@/lib/activity-service";
+import { advanceNewLeadToContactedInTransaction } from "@/lib/pipeline/status-service";
 import { normalizeEmailAddresses } from "./participant-identity";
 
-type OutboundContactClient = Pick<
-  Prisma.TransactionClient,
-  "conversation" | "lead" | "leadActivity" | "message" | "task"
->;
+type OutboundContactClient = Prisma.TransactionClient;
 
 type ImportedMessage = {
   id: string;
@@ -65,9 +63,12 @@ export async function recordGmailOutboundContactEvidence(
         userId: ownerId,
         email: { in: recipients, mode: "insensitive" },
       },
-      select: { id: true, email: true },
+      select: { id: true, email: true, status: true },
     });
     const candidatesByEmail = new Map<string, string[]>();
+    const statusByLeadId = new Map(
+      candidates.map((candidate) => [candidate.id, candidate.status]),
+    );
     for (const candidate of candidates) {
       const email = normalizeEmailAddresses(candidate.email)[0];
       if (!email) continue;
@@ -106,6 +107,15 @@ export async function recordGmailOutboundContactEvidence(
       })),
     );
     created += result.count;
+    for (const leadId of matchedLeadIds) {
+      if (statusByLeadId.get(leadId) !== "NEW") continue;
+      await advanceNewLeadToContactedInTransaction(client, {
+        ownerId,
+        leadId,
+        actorType: "SYSTEM",
+        source: "GMAIL",
+      });
+    }
   }
 
   return { created };

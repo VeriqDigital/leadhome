@@ -5,7 +5,12 @@ vi.mock("server-only", () => ({}));
 
 import { recordGmailOutboundContactEvidence } from "./outbound-contact-service";
 
-type LeadRow = { id: string; userId: string; email: string | null };
+type LeadRow = {
+  id: string;
+  userId: string;
+  email: string | null;
+  status?: "NEW" | "CONTACTED";
+};
 
 function harness(leads: LeadRow[] = []) {
   const activities: Record<string, any>[] = [];
@@ -23,7 +28,7 @@ function harness(leads: LeadRow[] = []) {
                 lead.email &&
                 wanted.has(lead.email.toLowerCase()),
             )
-            .map(({ id, email }) => ({ id, email }));
+            .map(({ id, email, status = "NEW" }) => ({ id, email, status }));
         }
         const wanted = new Set(where.id.in);
         return leads
@@ -31,6 +36,30 @@ function harness(leads: LeadRow[] = []) {
             (lead) => lead.userId === where.userId && wanted.has(lead.id),
           )
           .map(({ id }) => ({ id }));
+      }),
+      findFirst: vi.fn(async ({ where }: any) => {
+        const lead = leads.find(
+          (item) => item.id === where.id && item.userId === where.userId,
+        );
+        return lead
+          ? {
+              id: lead.id,
+              name: "Lead",
+              status: lead.status ?? "NEW",
+              updatedAt: new Date("2026-08-01T12:00:00.000Z"),
+            }
+          : null;
+      }),
+      updateMany: vi.fn(async ({ where, data }: any) => {
+        const lead = leads.find(
+          (item) =>
+            item.id === where.id &&
+            item.userId === where.userId &&
+            (item.status ?? "NEW") === where.status,
+        );
+        if (!lead) return { count: 0 };
+        lead.status = data.status;
+        return { count: 1 };
       }),
     },
     conversation: {
@@ -99,7 +128,7 @@ describe("Gmail outbound contact evidence", () => {
       client as never,
       input(),
     )).resolves.toEqual({ created: 1 });
-    expect(activities).toEqual([
+    expect(activities).toContainEqual(
       expect.objectContaining({
         userId: "owner-a",
         leadId: "lead-a",
@@ -110,7 +139,15 @@ describe("Gmail outbound contact evidence", () => {
         source: "GMAIL",
         title: "Email sent",
       }),
-    ]);
+    );
+    expect(activities).toContainEqual(expect.objectContaining({
+      userId: "owner-a",
+      leadId: "lead-a",
+      type: "STATUS_CHANGED",
+      actorType: "SYSTEM",
+      source: "GMAIL",
+      metadata: { from: "NEW", to: "CONTACTED" },
+    }));
   });
 
   it("is stable across repeated sync processing and retry", async () => {
@@ -119,8 +156,9 @@ describe("Gmail outbound contact evidence", () => {
     ]);
     await recordGmailOutboundContactEvidence(client as never, input());
     await recordGmailOutboundContactEvidence(client as never, input());
-    expect(activities).toHaveLength(1);
-    expect(activities[0]?.idempotencyKey).toMatch(
+    expect(activities.filter((activity) => activity.type === "MESSAGE_SENT"))
+      .toHaveLength(1);
+    expect(activities.find((activity) => activity.type === "MESSAGE_SENT")?.idempotencyKey).toMatch(
       /^gmail-outbound-contact:[a-f0-9]{64}$/,
     );
   });
@@ -184,12 +222,15 @@ describe("Gmail outbound contact evidence", () => {
         "malformed",
       ] })]),
     );
-    expect(activities.map((activity) => activity.leadId).sort()).toEqual([
+    const sentActivities = activities.filter(
+      (activity) => activity.type === "MESSAGE_SENT",
+    );
+    expect(sentActivities.map((activity) => activity.leadId).sort()).toEqual([
       "lead-a",
       "lead-b",
     ]);
-    expect(activities.every((activity) => activity.messageId === null)).toBe(true);
-    expect(activities.every(
+    expect(sentActivities.every((activity) => activity.messageId === null)).toBe(true);
+    expect(sentActivities.every(
       (activity) => activity.conversationId === "conversation-a",
     )).toBe(true);
   });

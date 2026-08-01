@@ -20,9 +20,9 @@ describe("dashboard attention destination filters", () => {
       join(process.cwd(), "app/leads/page.tsx"),
       "utf8",
     );
-    expect(source).toContain(
-      '<input type="hidden" name="attention" value={attention}',
-    );
+    expect(source).toContain('name="attention"');
+    expect(source).toContain('label: "Needs contact"');
+    expect(source).toContain('label: "All contact states"');
     expect(source).toContain('query.set("attention", attention)');
     expect(source).toContain(
       "Showing new leads with no recorded outbound contact.",

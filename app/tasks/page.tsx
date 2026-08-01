@@ -92,6 +92,7 @@ export default async function TasksPage({
     if (nextPage > 1) query.set("page", String(nextPage));
     return `/tasks${query.size ? `?${query}` : ""}`;
   };
+  const currentHref = href(page);
 
   return (
     <div className="mx-auto max-w-315">
@@ -174,7 +175,7 @@ export default async function TasksPage({
                       <TaskAction action={reopenTaskAction} id={task.id} pendingLabel="Reopening…">Reopen</TaskAction>
                     )}
                     <Link
-                      href={`/tasks/${task.id}/edit`}
+                      href={`/tasks/${task.id}/edit?returnTo=${encodeURIComponent(currentHref)}`}
                       className="rounded-lg border border-black/10 px-3 py-2 text-xs font-semibold hover:bg-black/[0.03] dark:hover:bg-white/[0.05]"
                     >
                       Edit

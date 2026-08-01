@@ -401,6 +401,7 @@ describe("lead action activity transactions", () => {
   it("marks an owned lead contacted idempotently without fabricating messages", async () => {
     mocks.createActivities
       .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 1 })
       .mockResolvedValueOnce({ count: 0 });
 
     await expect(markLeadContactedAction(leadId, {}, new FormData()))
@@ -429,7 +430,22 @@ describe("lead action activity transactions", () => {
       skipDuplicates: true,
     });
     expect(mocks.updateLead).not.toHaveBeenCalled();
-    expect(mocks.updateLeads).not.toHaveBeenCalled();
+    expect(mocks.updateLeads).toHaveBeenCalledWith({
+      where: { id: leadId, userId: "user-a", status: "NEW" },
+      data: { status: "CONTACTED" },
+    });
+    expect(mocks.currentLead?.status).toBe("CONTACTED");
+    expect(mocks.createActivities).toHaveBeenCalledWith({
+      data: [expect.objectContaining({
+        userId: "user-a",
+        leadId,
+        type: "STATUS_CHANGED",
+        actorType: "USER",
+        source: "MANUAL",
+        metadata: { from: "NEW", to: "CONTACTED" },
+      })],
+      skipDuplicates: false,
+    });
     expect(mocks.updateConversations).not.toHaveBeenCalled();
     expect(mocks.transaction.mock.calls.at(-1)?.[0]).toBeTypeOf("function");
   });

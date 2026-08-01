@@ -11,12 +11,18 @@ const services = vi.hoisted(() => ({
 const cache = vi.hoisted(() => ({
   revalidatePath: vi.fn(),
 }));
+const navigation = vi.hoisted(() => ({
+  redirect: vi.fn(() => {
+    throw new Error("NEXT_REDIRECT");
+  }),
+}));
 
 vi.mock("@/lib/auth-user", () => ({
   requireUser: vi.fn(async () => ({ id: "owner-a" })),
 }));
 vi.mock("@/lib/tasks/task-service", () => services);
 vi.mock("next/cache", () => ({ revalidatePath: cache.revalidatePath }));
+vi.mock("next/navigation", () => navigation);
 
 import {
   cancelTaskAction,
@@ -103,5 +109,25 @@ describe("task transition actions", () => {
 
     expect(services.completeTask).toHaveBeenCalledTimes(1);
     expect(cache.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("returns to the validated originating task filters after edit deletion", async () => {
+    const data = new FormData();
+    data.set("taskId", legacyId);
+    data.set("returnTo", "/tasks?view=all&sort=updated-desc&page=2");
+
+    await expect(deleteTaskAction(data)).rejects.toThrow("NEXT_REDIRECT");
+    expect(navigation.redirect).toHaveBeenCalledWith(
+      "/tasks?view=all&sort=updated-desc&page=2",
+    );
+  });
+
+  it("never redirects task deletion to an external return target", async () => {
+    const data = new FormData();
+    data.set("taskId", legacyId);
+    data.set("returnTo", "https://example.com/tasks");
+
+    await expect(deleteTaskAction(data)).rejects.toThrow("NEXT_REDIRECT");
+    expect(navigation.redirect).toHaveBeenCalledWith("/tasks");
   });
 });

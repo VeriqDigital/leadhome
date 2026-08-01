@@ -28,11 +28,15 @@ export async function changeLeadStatusInTransaction(
     leadId,
     status,
     current,
+    actorType = "USER",
+    source = "MANUAL",
   }: {
     ownerId: string;
     leadId: string;
     status: LeadStatus;
     current?: { id: string; status: LeadStatus };
+    actorType?: "USER" | "SYSTEM";
+    source?: "MANUAL" | "GMAIL" | "INBOX" | "SYSTEM";
   },
 ): Promise<LeadStatusMutation> {
   const previous =
@@ -61,8 +65,8 @@ export async function changeLeadStatusInTransaction(
     ownerId,
     leadId,
     type: "STATUS_CHANGED",
-    actorType: "USER",
-    source: "MANUAL",
+    actorType,
+    source,
     title: "Status changed",
     description: `${statusLabels[previous.status]} → ${statusLabels[status]}`,
     metadata: { from: previous.status, to: status },
@@ -81,6 +85,36 @@ export async function changeLeadStatusInTransaction(
   };
 }
 
+export async function advanceNewLeadToContactedInTransaction(
+  tx: Prisma.TransactionClient,
+  {
+    ownerId,
+    leadId,
+    actorType = "SYSTEM",
+    source = "SYSTEM",
+  }: {
+    ownerId: string;
+    leadId: string;
+    actorType?: "USER" | "SYSTEM";
+    source?: "MANUAL" | "GMAIL" | "INBOX" | "SYSTEM";
+  },
+): Promise<LeadStatusMutation> {
+  const current = await tx.lead.findFirst({
+    where: { id: leadId, userId: ownerId },
+    select: canonicalSelect,
+  });
+  if (!current) return { kind: "not-found" };
+  if (current.status !== "NEW") return { kind: "unchanged", lead: current };
+  return changeLeadStatusInTransaction(tx, {
+    ownerId,
+    leadId,
+    status: "CONTACTED",
+    current,
+    actorType,
+    source,
+  });
+}
+
 export function moveLeadStatus(
   ownerId: string,
   leadId: string,
@@ -89,4 +123,35 @@ export function moveLeadStatus(
   return prisma.$transaction((tx) =>
     changeLeadStatusInTransaction(tx, { ownerId, leadId, status }),
   );
+}
+
+export async function reconcileContactedLeadStatuses(
+  ownerId: string,
+  limit = 100,
+) {
+  return prisma.$transaction(async (tx) => {
+    const leads = await tx.lead.findMany({
+      where: {
+        userId: ownerId,
+        status: "NEW",
+        activities: {
+          some: { userId: ownerId, type: "MESSAGE_SENT" },
+        },
+      },
+      orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
+      take: Math.min(Math.max(Math.trunc(limit), 1), 500),
+      select: { id: true },
+    });
+    let changed = 0;
+    for (const lead of leads) {
+      const result = await advanceNewLeadToContactedInTransaction(tx, {
+        ownerId,
+        leadId: lead.id,
+        actorType: "SYSTEM",
+        source: "SYSTEM",
+      });
+      if (result.kind === "changed") changed++;
+    }
+    return { changed, hasMore: leads.length === Math.min(Math.max(Math.trunc(limit), 1), 500) };
+  });
 }

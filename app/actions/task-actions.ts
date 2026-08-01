@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth-user";
 import {
   cancelTask,
@@ -15,6 +16,7 @@ import {
   taskInputSchema,
   taskValues,
 } from "@/lib/tasks/task-validation";
+import { safeTaskListReturnPath } from "@/app/tasks/task-return-path";
 
 export type TaskActionState = {
   success?: boolean;
@@ -94,14 +96,15 @@ export async function updateTaskAction(
 async function transition(
   taskId: string,
   operation: typeof completeTask,
-): Promise<void> {
+): Promise<Awaited<ReturnType<typeof completeTask>> | undefined> {
   const parsed = taskIdSchema.safeParse(taskId);
-  if (!parsed.success) return;
+  if (!parsed.success) return undefined;
   const user = await requireUser();
   const result = await operation(user.id, parsed.data);
   if (result.kind === "changed") {
     revalidateTaskPaths(result.task.lead?.id);
   }
+  return result;
 }
 
 export async function completeTaskAction(formData: FormData) {
@@ -117,5 +120,11 @@ export async function cancelTaskAction(formData: FormData) {
 }
 
 export async function deleteTaskAction(formData: FormData) {
-  await transition(String(formData.get("taskId") ?? ""), deleteTask);
+  const result = await transition(
+    String(formData.get("taskId") ?? ""),
+    deleteTask,
+  );
+  if (formData.has("returnTo") && result?.kind === "changed") {
+    redirect(safeTaskListReturnPath(formData.get("returnTo")));
+  }
 }

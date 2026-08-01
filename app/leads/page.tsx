@@ -61,7 +61,6 @@ export default async function LeadsPage({
       />
       <section className="dashboard-card mt-9 rounded-2xl border border-black/5.5 bg-white p-6 shadow-[0_8px_30px_rgba(23,24,28,0.035)]">
         <form className="mb-6 flex flex-col gap-3 sm:flex-row">
-          {attention && <input type="hidden" name="attention" value={attention} />}
           <label className="relative flex-1">
             <Search className="absolute left-3.5 top-3 size-4 text-[#687080]" />
             <input
@@ -79,6 +78,14 @@ export default async function LeadsPage({
                 value: item,
                 label: statusLabels[item],
               })),
+            ]}
+          />
+          <StatusFilter
+            name="attention"
+            defaultValue={attention ?? ""}
+            options={[
+              { value: "", label: "All contact states" },
+              { value: "untouched", label: "Needs contact" },
             ]}
           />
           <StatusFilter
