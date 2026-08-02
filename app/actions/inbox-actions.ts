@@ -21,6 +21,7 @@ import {
 } from "@/lib/messaging/matching-service";
 import type {
   CompanyDetectionMutationState,
+  ContactExtractionMutationState,
   InboxMutationState,
 } from "@/app/inbox/mutation-state";
 import {
@@ -28,8 +29,23 @@ import {
   dismissConversationCompanySuggestion,
   recheckConversationCompany,
 } from "@/lib/messaging/company-detection-service";
+import {
+  applyAvailableConversationContactSuggestions,
+  applyConversationContactSuggestion,
+  dismissAllConversationContactSuggestions,
+  dismissConversationContactSuggestion,
+  recheckConversationContactSuggestions,
+} from "@/lib/messaging/contact-extraction-service";
+import { reportOperationalError } from "@/lib/server-errors";
 
 const id = z.string().cuid();
+const fingerprint = z.string().regex(/^[a-f0-9]{64}$/);
+const reviewFingerprints = z
+  .array(fingerprint)
+  .min(1)
+  .max(3)
+  .refine((values) => new Set(values).size === values.length);
+const contactField = z.enum(["name", "email", "phone"]);
 export type SmartMatchMutationState = {
   success: boolean;
   changed?: boolean;
@@ -81,6 +97,48 @@ const schemas = {
       conversationId: id,
       expectedLeadId: z.string().optional(),
       evidenceFingerprint: z.string().optional(),
+    }),
+  ]),
+  contactMutation: z.discriminatedUnion("intent", [
+    z.object({
+      intent: z.literal("APPLY"),
+      conversationId: id,
+      expectedLeadId: id,
+      field: contactField,
+      evidenceFingerprint: fingerprint,
+      reviewFingerprint: fingerprint,
+    }),
+    z.object({
+      intent: z.literal("REPLACE"),
+      conversationId: id,
+      expectedLeadId: id,
+      field: contactField,
+      evidenceFingerprint: fingerprint,
+      reviewFingerprint: fingerprint,
+    }),
+    z.object({
+      intent: z.literal("APPLY_ALL"),
+      conversationId: id,
+      expectedLeadId: id,
+      reviewFingerprints,
+    }),
+    z.object({
+      intent: z.literal("DISMISS"),
+      conversationId: id,
+      expectedLeadId: id,
+      field: contactField,
+      evidenceFingerprint: fingerprint,
+      reviewFingerprint: fingerprint,
+    }),
+    z.object({
+      intent: z.literal("DISMISS_ALL"),
+      conversationId: id,
+      expectedLeadId: id,
+      reviewFingerprints,
+    }),
+    z.object({
+      intent: z.literal("RECHECK"),
+      conversationId: id,
     }),
   ]),
 };
@@ -409,6 +467,175 @@ export async function mutateConversationCompanyAction(
     return {
       success: false,
       message: "Company detection could not be updated. Please try again.",
+    };
+  }
+}
+
+function contactMutationMessage(
+  intent:
+    | "APPLY"
+    | "REPLACE"
+    | "APPLY_ALL"
+    | "DISMISS"
+    | "DISMISS_ALL"
+    | "RECHECK",
+  result: {
+    changed: boolean;
+    outcome:
+      | "APPLIED"
+      | "DISMISSED"
+      | "NO_CHANGE"
+      | "STALE"
+      | "NOT_APPLICABLE"
+      | "PARTIAL";
+    appliedFields?: readonly string[];
+    skippedFields?: readonly string[];
+  },
+) {
+  if (result.outcome === "STALE" || result.outcome === "NOT_APPLICABLE") {
+    return "The attached lead or contact evidence changed. Review the latest suggestions and try again.";
+  }
+  if (result.outcome === "PARTIAL") {
+    return result.appliedFields?.length
+      ? "Available contact details were applied. Changed suggestions were skipped."
+      : "Contact details changed before they could be applied. Review the latest suggestions.";
+  }
+  if (result.outcome === "APPLIED") {
+    return intent === "APPLY_ALL"
+      ? "Available contact details applied."
+      : intent === "REPLACE"
+        ? "Current contact detail replaced."
+        : "Contact detail applied.";
+  }
+  if (result.outcome === "DISMISSED") {
+    if (intent === "DISMISS_ALL") {
+      return result.changed
+        ? "Contact suggestions dismissed."
+        : "These contact suggestions were already dismissed.";
+    }
+    return result.changed
+      ? "Contact suggestion dismissed."
+      : "This contact suggestion was already dismissed.";
+  }
+  if (intent === "RECHECK") return "Contact details checked.";
+  if (intent === "DISMISS_ALL") {
+    return "No contact suggestions needed dismissal.";
+  }
+  if (intent === "DISMISS") {
+    return "This contact suggestion was already dismissed.";
+  }
+  return "No contact details were changed.";
+}
+
+export async function mutateConversationContactAction(
+  _state: ContactExtractionMutationState,
+  formData: FormData,
+): Promise<ContactExtractionMutationState> {
+  const raw = {
+    intent: formData.get("intent"),
+    conversationId: formData.get("conversationId"),
+    expectedLeadId: formData.get("expectedLeadId"),
+    field: formData.get("field"),
+    evidenceFingerprint: formData.get("evidenceFingerprint"),
+    reviewFingerprint: formData.get("reviewFingerprint"),
+    reviewFingerprints: formData.getAll("reviewFingerprint"),
+  };
+  const parsed = schemas.contactMutation.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      success: false,
+      message: "That contact suggestion is no longer available.",
+    };
+  }
+  const user = await requireUser();
+
+  try {
+    let result: Awaited<
+      ReturnType<typeof recheckConversationContactSuggestions>
+    >;
+    switch (parsed.data.intent) {
+      case "APPLY":
+      case "REPLACE":
+        result = await applyConversationContactSuggestion({
+          ownerId: user.id,
+          conversationId: parsed.data.conversationId,
+          expectedLeadId: parsed.data.expectedLeadId,
+          field: parsed.data.field,
+          evidenceFingerprint: parsed.data.evidenceFingerprint,
+          reviewFingerprint: parsed.data.reviewFingerprint,
+          replace: parsed.data.intent === "REPLACE",
+        });
+        break;
+      case "APPLY_ALL":
+        result = await applyAvailableConversationContactSuggestions({
+          ownerId: user.id,
+          conversationId: parsed.data.conversationId,
+          expectedLeadId: parsed.data.expectedLeadId,
+          reviewFingerprints: parsed.data.reviewFingerprints,
+        });
+        break;
+      case "DISMISS":
+        result = await dismissConversationContactSuggestion({
+          ownerId: user.id,
+          conversationId: parsed.data.conversationId,
+          expectedLeadId: parsed.data.expectedLeadId,
+          field: parsed.data.field,
+          evidenceFingerprint: parsed.data.evidenceFingerprint,
+          reviewFingerprint: parsed.data.reviewFingerprint,
+        });
+        break;
+      case "DISMISS_ALL":
+        result = await dismissAllConversationContactSuggestions({
+          ownerId: user.id,
+          conversationId: parsed.data.conversationId,
+          expectedLeadId: parsed.data.expectedLeadId,
+          reviewFingerprints: parsed.data.reviewFingerprints,
+        });
+        break;
+      case "RECHECK":
+        result = await recheckConversationContactSuggestions(
+          user.id,
+          parsed.data.conversationId,
+        );
+        break;
+    }
+
+    revalidatePath("/inbox");
+    if (
+      result.changed &&
+      (result.outcome === "APPLIED" || result.outcome === "PARTIAL")
+    ) {
+      revalidatePath("/");
+      revalidatePath("/leads");
+      revalidatePath("/leads/[id]", "page");
+      revalidatePath("/pipeline");
+      if (result.contactView.lead) {
+        revalidatePath(`/leads/${result.contactView.lead.id}`);
+      }
+    }
+
+    const unsuccessful =
+      result.outcome === "STALE" ||
+      result.outcome === "NOT_APPLICABLE" ||
+      (result.outcome === "PARTIAL" && !result.appliedFields?.length);
+    return {
+      success: !unsuccessful,
+      changed: result.changed,
+      message: contactMutationMessage(parsed.data.intent, result),
+      contactView: result.contactView,
+      ...(result.appliedFields
+        ? { appliedFields: [...result.appliedFields] }
+        : {}),
+      ...(result.skippedFields
+        ? { skippedFields: [...result.skippedFields] }
+        : {}),
+    };
+  } catch (error) {
+    reportOperationalError("contact extraction mutation failed", error);
+    revalidatePath("/inbox");
+    return {
+      success: false,
+      message: "Contact suggestions could not be updated. Please try again.",
     };
   }
 }

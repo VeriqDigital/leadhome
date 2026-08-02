@@ -26,6 +26,7 @@ model User {
   conversationAnalyses            ConversationAnalysis[]
   conversationLeadMatchDismissals ConversationLeadMatchDismissal[]
   companySuggestionDismissals     ConversationCompanySuggestionDismissal[]
+  contactSuggestionDismissals     ConversationContactSuggestionDismissal[]
   conversationIntelligenceEnabled Boolean                                  @default(false)
   createdAt                       DateTime                                 @default(now())
   updatedAt                       DateTime                                 @updatedAt
@@ -102,6 +103,7 @@ model Lead {
   tasks                           Task[]
   conversationLeadMatchDismissals ConversationLeadMatchDismissal[]
   companySuggestionDismissals     ConversationCompanySuggestionDismissal[]
+  contactSuggestionDismissals     ConversationContactSuggestionDismissal[]
   name                            String
   email                           String?
   phone                           String?
@@ -230,6 +232,7 @@ model Conversation {
   analysis                    ConversationAnalysis?
   leadMatchDismissals         ConversationLeadMatchDismissal[]
   companySuggestionDismissals ConversationCompanySuggestionDismissal[]
+  contactSuggestionDismissals ConversationContactSuggestionDismissal[]
   createdAt                   DateTime                                 @default(now())
   updatedAt                   DateTime                                 @updatedAt
 
@@ -276,6 +279,24 @@ model ConversationCompanySuggestionDismissal {
   @@unique([ownerId, conversationId, leadId, evidenceFingerprint], map: "CompanySuggestionDismissal_owner_candidate_fingerprint_key")
   @@index([ownerId, conversationId, leadId, dismissedAt], map: "CompanySuggestionDismissal_owner_conversation_lead_idx")
   @@index([ownerId, leadId], map: "CompanySuggestionDismissal_owner_lead_idx")
+}
+
+model ConversationContactSuggestionDismissal {
+  id                  String                 @id @default(cuid())
+  ownerId             String
+  owner               User                   @relation(fields: [ownerId], references: [id], onDelete: Cascade, map: "ContactSuggestionDismissal_ownerId_fkey")
+  conversationId      String
+  conversation        Conversation           @relation(fields: [conversationId, ownerId], references: [id, ownerId], onDelete: Cascade, map: "ContactSuggestionDismissal_conversation_owner_fkey")
+  leadId              String
+  lead                Lead                   @relation(fields: [leadId, ownerId], references: [id, userId], onDelete: Cascade, map: "ContactSuggestionDismissal_lead_owner_fkey")
+  field               ContactSuggestionField
+  candidateHash       String
+  evidenceFingerprint String
+  dismissedAt         DateTime               @default(now())
+
+  @@unique([ownerId, conversationId, leadId, field, candidateHash, evidenceFingerprint], map: "ContactSuggestionDismissal_owner_field_candidate_evidence_key")
+  @@index([ownerId, conversationId, leadId, dismissedAt], map: "ContactSuggestionDismissal_owner_conversation_lead_idx")
+  @@index([ownerId, leadId], map: "ContactSuggestionDismissal_owner_lead_idx")
 }
 
 model Message {
@@ -413,6 +434,12 @@ enum LeadStatus {
   NEGOTIATING
   WON
   LOST
+}
+
+enum ContactSuggestionField {
+  NAME
+  EMAIL
+  PHONE
 }
 
 enum LeadActivityType {

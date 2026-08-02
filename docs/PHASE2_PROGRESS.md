@@ -2,32 +2,35 @@
 
 ## Current Milestone
 
-Dashboard Needs Attention is the completed and stabilized Phase 2 milestone.
-It turns the existing dashboard from a statistics-first collection of cards
-into an owner-scoped daily work surface derived from canonical CRM state.
-Contact Extraction is the recommended next milestone, but has not started.
+Reviewed Contact Extraction is the completed Phase 2 milestone. Its
+owner-scoped service, Inbox review surface, contact-dismissal migration,
+canonical lead mutation path, focused coverage, and Node 24 verification are
+implemented and reconciled.
 
-The implementation is intentionally deterministic:
+The implementation is intentionally review-first:
 
-- no attention or notification records are persisted;
-- no new AI calls or priority scores are introduced;
-- Inbox, Leads, and Tasks deep links reuse their canonical state; and
-- action queues remain bounded and owner-scoped.
+- no sender or AI-derived contact value is automatically applied;
+- no new AI call, job type, active-suggestion cache, or Dashboard queue is
+  introduced;
+- all writes reconstruct current owner-scoped evidence and attachment state;
+  and
+- suggestions, dismissals, ambiguity, and rechecks remain activity-silent.
 
 ## Milestone Status
 
 **Complete.**
 
-The centralized attention service, action-first dashboard, canonical
-destination filters, focused regression coverage, documentation, and one
-supporting index migration are implemented and reconciled.
+Focused and related regressions, the complete suite, TypeScript, ESLint,
+Prisma validation/type generation, migration status, the production build,
+and repository diff checks have completed. The additive migration is pending
+deployment; deployment was not performed without explicit authorization.
 
 ## Phase 2 Roadmap
 
 - [x] Unified Activity Timeline
 - [x] Smart Lead Matching
 - [x] Automatic Company Detection
-- [ ] Contact Extraction
+- [x] Contact Extraction
 - [ ] Inbox Prioritization
 - [x] Dashboard Needs Attention
 - [ ] AI Buying Signal Detection
@@ -62,13 +65,46 @@ below the action surface. See [Dashboard Needs Attention](./dashboard.md) for
 exact inclusion, exclusion, ordering, bounds, failure behavior, and deferred
 signals.
 
-Contact Extraction is recommended next because the existing Conversation
-Intelligence result, explicit-review UI pattern, owner-scoped activity model,
-and conservative apply semantics provide its prerequisites without depending
-on unfinished prioritization or automation. Inbox Prioritization, AI Buying
-Signal Detection, Follow-up Detection, Notification Center, and Automation
-Rules Engine remain separate later milestones. Automatic Company Detection
-does not alter Smart Lead Matching rules or apply AI output to lead identity.
+## Reviewed Contact Extraction
+
+One central owner-scoped service derives reviewable `Lead.name`, `Lead.email`,
+and `Lead.phone` candidates from a unique credible external inbound sender and
+the current validated Conversation Intelligence contact result. Deterministic
+sender metadata has precedence; AI data remains suggestion-only. Multiple or
+conflicting values fail closed per field, equal current values remain hidden,
+blank fields use Apply, and populated conflicts require explicit replacement.
+A sender/body name conflict suppresses only the name, so a unique sender email
+and a validated unambiguous phone may remain reviewable.
+
+Active reanalysis has a canonical refreshing state. Retained AI output is
+ignored while the analysis/latest job is queued, running, or waiting to retry;
+only independently safe deterministic email evidence may remain visible, with
+actions withheld. Stale Apply and Dismiss requests fail before any write, and
+ambiguity or pending work leaves a compact explanation instead of silently
+removing the panel.
+
+**Apply available fields** considers at most three displayed suggestions and
+applies only still-current blank, non-conflicting fields in one serializable
+transaction. It never replaces populated values. Each mutation rechecks the
+owner, attachment, evidence and review fingerprints, and current Lead fields;
+only an actual approved change emits one grouped `CONTACT_INFO_CHANGED`
+activity.
+
+Dismissals persist through owner-composite records scoped to conversation,
+attached lead, field, candidate hash, and evidence fingerprint. They store no
+raw contact candidate or message content. Evaluation is bounded to one
+selected conversation, 100 inbound message metadata rows, one possible
+101st-message ID probe, 20 mailbox identities, one analysis/latest-job lookup,
+and three dismissal decisions. An incomplete identity window fails closed.
+With Conversation Intelligence disabled or stale, deterministic sender
+suggestions remain available but AI-derived contact values do not.
+
+See [Reviewed Contact Extraction](./contact-extraction.md) for the complete
+evidence precedence, conflict, concurrency, owner-isolation, activity, and
+deferred-scope contract. Inbox Prioritization, AI Buying Signal Detection,
+Follow-up Detection, Notification Center, and Automation Rules Engine remain
+separate later milestones. Automatic Company Detection and Smart Lead
+Matching rules are unchanged.
 
 ## Automatic Company Detection
 
@@ -424,6 +460,29 @@ passed. The final Dashboard stabilization regression and full-suite runs also
 cover its enqueue, handler, runner, presentation, and owner-isolation paths,
 and the Node 24 production build passes.
 
+Reviewed Contact Extraction passed its final validation on Node 24.18.0:
+
+- the focused service, action, UI, schema, and safe-logging set passed 5 files /
+  83 tests;
+- the related Inbox, messaging, and Conversation Intelligence set passed 35
+  files / 376 tests, with the separately gated OpenAI smoke test skipped (36
+  files / 377 tests including that skip);
+- the complete suite passed 101 files / 685 tests, with the same one opt-in
+  smoke test skipped (102 files / 686 tests including that skip);
+- TypeScript, full ESLint, Prisma schema validation, Prisma client type
+  generation, and `git diff --check` passed;
+- the Next.js 16.2.11 production build passed and generated all 18 static
+  pages; and
+- Prisma found 21 migrations and reports the configured database schema is up
+  to date.
+
+Normal native Prisma engine replacement was attempted but an active Windows
+Node process had the generated query-engine DLL open. `prisma generate
+--no-engine` completed and supplied the exact current client types used by
+TypeScript and the successful build. The active process was not stopped.
+Authenticated manual review with real mailbox records remains an
+environment-specific operator check; the automated milestone is complete.
+
 ## Known Limitations
 
 - Matching is deterministic and intentionally conservative; it is not fuzzy or
@@ -438,7 +497,10 @@ and the Node 24 production build passes.
 - Existing conversations are reevaluated one at a time through
   **Recheck matches** and **Recheck company**; there is no bulk backfill scan,
   matching job, or company-detection job.
-- Contact Extraction is not an applied CRM workflow.
+- Reviewed Contact Extraction supports one primary contact and only name,
+  email, and phone. Multi-contact records, alternate details, job title,
+  website, address, social/signature enrichment, external enrichment, and
+  automatic application remain deferred.
 - Gmail remains read-only and has no scheduled periodic enqueue. The current
   queue drainer runs daily unless an operator uses Vercel's **Run** control.
 - Cron/function execution is at-least-once and production queue-stall alerting
@@ -446,7 +508,6 @@ and the Node 24 production build passes.
 
 ## Next Recommended Milestone
 
-Contact Extraction is the next roadmap item. It should remain a reviewed,
-evidence-backed workflow and must not weaken the unique-identity boundary used
-for automatic lead attachment or the conservative company-application
-boundary.
+Inbox Prioritization is the next unchecked roadmap milestone. It remains
+separate from Reviewed Contact Extraction; no prioritization work is part of
+this implementation.

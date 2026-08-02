@@ -3,8 +3,8 @@
 This document is the current implementation snapshot for future development.
 The Unified Activity Timeline, Smart Lead Matching, Automatic Company
 Detection, and the stabilized Dashboard Needs Attention milestone are
-implemented and verified. Contact Extraction is the recommended next planned
-milestone; it has not started.
+implemented and verified. Reviewed Contact Extraction is also implemented and
+verified as an explicit Inbox review workflow.
 
 ## Product Overview
 
@@ -77,6 +77,7 @@ other channels, but those adapters are not implemented.
   - [Pipeline board](./pipeline.md)
   - [Unified lead activity](./lead-activity-timeline.md)
   - [Dashboard Needs Attention](./dashboard.md)
+  - [Reviewed Contact Extraction](./contact-extraction.md)
 - `test/` provides the test replacement for the `server-only` module.
 - `public/` contains static assets, while root configuration files define
   Next.js, TypeScript, Tailwind/PostCSS, ESLint, Vitest, Auth.js, and proxy
@@ -142,6 +143,10 @@ a real multi-user database.
   derived company evidence for the current owner, conversation, attached lead,
   and fingerprint. Company suggestions themselves are not persisted because
   `Lead.company` remains the only company representation.
+  `ConversationContactSuggestionDismissal` suppresses one reviewed name,
+  email, or phone candidate for the owner, conversation, attached lead,
+  contact field, hashed normalized candidate, and evidence fingerprint.
+  Contact suggestions remain derived rather than cached.
   `Message` is unique by account/provider message ID and retains normalized
   message content and timestamps.
 - **Tasks:** `Task` is the canonical work/reminder record. Lead and
@@ -180,6 +185,10 @@ Important invariants include:
   dismissal is unique by owner, conversation, attached lead, and evidence
   fingerprint; only a current eligible candidate may update a still-blank
   `Lead.company`.
+- Contact suggestions are derived from bounded external-sender metadata and
+  current structured analysis. Owner-composite dismissals contain candidate
+  hashes rather than contact values, and only an explicit, current review
+  action may update `Lead.name`, `Lead.email`, or `Lead.phone`.
 - A lead's `nextFollowUpDate` equals the earliest due date of its open
   `FOLLOW_UP` tasks.
 - One owner/type/idempotency key identifies an active job; terminal services
@@ -214,6 +223,14 @@ dismissal time, one unique dismissal key, and a bounded lookup index. It does
 not add a `Company` model, duplicate `Lead.company`, rewrite leads, or create a
 new activity type. The same migration extends `JobType` with
 `COMPANY_DETECTION` for non-blocking Gmail-import follow-up work.
+
+Additive migration
+`20260801120000_add_contact_suggestion_dismissals` adds the closed
+`ContactSuggestionField` enum and
+`ConversationContactSuggestionDismissal` with owner-composite conversation
+and lead relations, hashed candidates, evidence-specific uniqueness, cascade
+deletion, and bounded lookup indexes. It does not persist active suggestions,
+rewrite leads or messages, or add an activity type.
 
 ## Background Job System
 
@@ -346,6 +363,29 @@ provides owner-scoped **Apply company**, **Dismiss**, evidence, and
 **Recheck company** controls backed by canonical state. Only an actual company
 change records the existing `COMPANY_CHANGED` event.
 
+Reviewed Contact Extraction adds a separate review panel for an attached
+lead's name, email, and phone. It derives at most three suggestions from one
+credible external inbound sender and the current validated Conversation
+Intelligence contact result; deterministic sender evidence takes precedence,
+while conflicts fail closed per field. Sender/body name disagreement suppresses
+the name without hiding an independently safe sender email or validated phone.
+Active analysis/job state ignores retained AI output, renders a stable refresh
+explanation or deterministic email evidence without actions, and rejects stale
+Apply/Dismiss requests before writes. Every candidate is review-only. Blank
+fields may be applied individually or through **Apply
+available fields**; populated fields require explicit replacement and are
+never included in bulk application. Owner-scoped serializable actions
+reconstruct the suggestion and verify its evidence, current lead value, and
+attachment before a compare-and-set update. Dismissals store hashes rather
+than contact values and survive unchanged evidence. Evaluation is bounded to
+the selected conversation, 100 inbound message metadata rows, one possible
+101st-message ID probe, 20 owned mailbox addresses, one analysis/latest-job
+lifecycle lookup, and three dismissal decisions. An incomplete identity window
+fails closed. When Conversation Intelligence is disabled or stale, only
+deterministic sender suggestions are available. See
+[Reviewed Contact Extraction](./contact-extraction.md) for the complete
+evidence, ambiguity, concurrency, and deferred-scope rules.
+
 Mailbox authorization is separate from account login. Gmail uses
 `/api/gmail/connect` and `/api/gmail/callback`; Auth.js Google sign-in uses
 `/api/auth/callback/google`. Connect/Reconnect controls are ordinary
@@ -366,11 +406,14 @@ sentiment, action suggestions, and missing information.
 
 The Inbox presents expandable summaries, key details, contact links, copy
 controls, and task-prefill links. Suggested data remains separate from Lead
-fields. A qualifying structured company can feed the separate reviewed
-company-suggestion flow after analysis completes, but AI output never
-automatically edits the lead. Analysis never automatically changes pipeline
-stages or creates tasks. See
-[conversation-intelligence.md](./conversation-intelligence.md).
+fields unless the owner explicitly approves a current candidate through the
+separate company or Reviewed Contact Extraction workflow. A qualifying
+structured company can feed the reviewed company-suggestion flow, while the
+validated contact name, email, and phone may feed the contact review panel.
+Neither path automatically applies AI output. Analysis never automatically
+changes pipeline stages or creates tasks. See
+[conversation-intelligence.md](./conversation-intelligence.md) and
+[contact-extraction.md](./contact-extraction.md).
 
 ### Pipeline
 
@@ -421,6 +464,10 @@ continue to use the existing `LeadActivity` types and recording service.
 Company evaluation, suggestions, dismissals, and no-change rechecks likewise
 remain silent; only an actual `Lead.company` write emits the existing
 `COMPANY_CHANGED` activity.
+Contact suggestion calculation, ambiguity, dismissal, recheck, stale
+requests, and no-op application are also silent. One successful explicit
+contact apply groups all approved name, email, and phone changes into the
+existing `CONTACT_INFO_CHANGED` event linked to the Inbox conversation.
 
 Lead detail displays date-grouped activity, actor/source context, related
 entity links, missing-entity fallbacks, relative and exact times, loading and
@@ -464,6 +511,12 @@ Connect/Reconnect flow.
   otherwise present a review-only AI/domain candidate. Apply, dismiss, and
   recheck verify the current attachment, company, owner, and evidence
   fingerprint and return canonical state.
+- **Review contact details:** For one attached owned conversation, derive
+  bounded name, email, and phone candidates from external-sender metadata and
+  current validated analysis. Require explicit Apply or Replace approval,
+  skip populated conflicts during Apply available fields, and revalidate the
+  attachment, evidence fingerprint, and current field values inside the
+  owner-scoped write transaction.
 - **Run AI analysis:** Check owner, preference, conversation eligibility,
   content hash, and active idempotent job; enqueue typed work; prepare bounded
   plain text; call OpenAI from the worker; validate strict output; lease-fence
@@ -510,7 +563,9 @@ controls, conversation attachment/detachment and lead creation, Gmail
 enqueue/disconnect, task lifecycle, website source management, Conversation
 Intelligence preference, analysis enqueue/reanalysis, and owner-scoped
 possible-match confirmation, dismissal, and single-conversation
-**Recheck matches**.
+**Recheck matches**. Inbox actions also apply, explicitly replace, dismiss,
+bulk-review, and recheck contact suggestions through their canonical
+owner-scoped service.
 
 The common mutation pattern is: authenticate, parse with Zod or a bounded
 typed parser, perform owner-scoped domain work (usually in a Prisma
@@ -593,6 +648,10 @@ Verified protections include:
 - Company detection uses bounded owner-scoped reads, conservative recognized
   business domains, evidence-fingerprinted dismissals, and compare-and-set
   writes so ambiguity or concurrent manual changes fail closed.
+- Reviewed contact mutations reconstruct bounded canonical suggestions,
+  validate owner-composite dismissal and attachment relationships, and use
+  review fingerprints plus compare-and-set writes so client-supplied values or
+  concurrent lead edits cannot cross the review boundary.
 - Typed activity enums, bounded text, structured metadata, explicit occurrence
   time, owner-scoped idempotency, and stable cursor ordering.
 - Atomic job claims, leases, heartbeats, fenced writes, bounded retries,
@@ -630,6 +689,9 @@ repository contains unit and structural regression coverage for:
   retries, leases, runner security, and local worker behavior.
 - Conversation Intelligence configuration, input preparation, strict schema,
   provider behavior, job lifecycle, UI presentation, and task prefill.
+- Reviewed Contact Extraction evidence precedence, ambiguity, field
+  validation, owner isolation, stale/concurrent application, hashed
+  dismissals, grouped activity, bounded reads, and Inbox presentation.
 - Task lifecycle, follow-up synchronization, filters, sorting, actions, and
   forms.
 - Pipeline metrics, queries, optimistic movement, rollback, and UI behavior.
@@ -691,6 +753,19 @@ production build passes. Migration
 `20260729210000_add_company_suggestion_dismissals` is additive and covered by
 the schema/migration regression set.
 
+Reviewed Contact Extraction passed 5 focused files / 83 tests and 35 related
+files / 376 tests on Node 24.18.0. The complete suite passed 101 files / 685
+tests, with only the opt-in OpenAI smoke test skipped (the related and full
+runs contain 36/377 and 102/686 including that skip). TypeScript, full ESLint,
+Prisma schema validation and client type generation, the Next.js 16.2.11
+production build, and `git diff --check` passed. Prisma found 21 migrations and
+reports the configured database schema is up to date. A live Windows Node
+process held the native
+query-engine DLL during normal client generation, so the verified generation
+used `--no-engine`; the current client types powered typecheck and the
+successful production build. Real-mailbox authenticated review remains an
+environment-specific operator check rather than an automated regression.
+
 ## Known Limitations and Technical Debt
 
 - Existing activity rows receive the best timestamp/source/actor information
@@ -712,8 +787,13 @@ the schema/migration regression set.
   canonical company/domain model. Unknown suffixes, ambiguous associations,
   conflicting evidence, and bounded-query overflow produce no automatic
   company write.
-- AI suggestions remain display-only except for explicit task-form prefill and
-  the reviewed, evidence-qualified company suggestion flow.
+- AI suggestions never mutate CRM state automatically. Explicit task-form
+  prefill, reviewed company application, and reviewed contact Apply/Replace
+  are the only current user-approved downstream paths.
+- Reviewed Contact Extraction supports one primary lead contact and only name,
+  email, and phone. Multi-contact records, alternate contact details, job
+  title, website, address, social enrichment, signature-specific provenance,
+  external enrichment, and automatic application remain deferred.
 - There is no notification center, automation rules engine, team workspace,
   billing, advanced reporting, or sales forecasting.
 - List pagination outside activity commonly uses offset pages or bounded
@@ -753,8 +833,9 @@ workflows expected for broader self-service use.
   association, reviewed AI/domain suggestions, dismissal/recheck safety,
   canonical owner-scoped application, and durable Gmail follow-up are
   implemented and verified.
-- [ ] **Contact Extraction** — AI may suggest contact details, but extraction
-  is not an applied CRM workflow.
+- [x] **Contact Extraction** — reviewed name, email, and phone suggestions,
+  explicit conflict replacement, hashed dismissals, bounded owner isolation,
+  grouped activity, and final validation are complete.
 - [ ] **Inbox Prioritization**
 - [x] **Dashboard Needs Attention** — five deterministic owner-scoped queues,
   bounded direct-record work, URL-backed destination filters, secondary
@@ -788,6 +869,10 @@ workflows expected for broader self-service use.
   database-only detector after attachment and completed analysis; automatically
   apply only an unambiguous known-domain association to a still-blank lead, and
   require explicit confirmation for AI/domain-formatted suggestions.
+- Keep contact suggestions derived in one owner-scoped service. Never
+  auto-apply sender or AI contact data; require current evidence and explicit
+  Apply/Replace approval, persist only hashed dismissal decisions, and group
+  approved contact fields into the existing contact-change activity.
 - Use monotonic timestamps and database uniqueness for retry-safe ingestion.
 - Record meaningful business activity through `lib/activity-service.ts`;
   avoid direct duplicate event-building paths and low-level sync noise.
@@ -820,8 +905,9 @@ workflows expected for broader self-service use.
 - Should Recent Activity remain chronological, or should a separate
   explainable Needs Attention score prioritize replies, overdue work, and
   buying signals?
-- What reviewed confirmation flow should apply AI-extracted contact data
-  without permitting autonomous CRM edits?
+- When should the single-primary-contact Lead fields evolve into a reviewed
+  multi-contact model without weakening the current owner and ambiguity
+  boundaries?
 - Should overdue-task transitions become stored activities, or remain derived
   state until a reliable scheduler exists?
 - What retention policy should remove expired OAuth states and, if needed,

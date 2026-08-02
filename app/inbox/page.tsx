@@ -27,6 +27,8 @@ import { LeadMatchSuggestions } from "./lead-match-suggestions";
 import { conversationMatchPresentation } from "./match-presentation";
 import { getConversationCompanyView } from "@/lib/messaging/company-detection-service";
 import { CompanySuggestion } from "./company-suggestion";
+import { getConversationContactExtractionView } from "@/lib/messaging/contact-extraction-service";
+import { ContactSuggestions } from "./contact-suggestions";
 import { GmailReplyLink } from "./gmail-reply-link";
 import {
   canonicalCompanyLead,
@@ -142,7 +144,16 @@ export default async function InboxPage({
         : 1,
   };
   const selectedId = one(params.conversation);
-  const [list, detail, leads, gmail, intelligence, leadMatch, companyView] =
+  const [
+    list,
+    detail,
+    leads,
+    gmail,
+    intelligence,
+    leadMatch,
+    companyView,
+    contactView,
+  ] =
     await Promise.all([
       listConversationSummaries(user.id, filters),
       selectedId ? getConversationDetail(user.id, selectedId) : null,
@@ -177,6 +188,9 @@ export default async function InboxPage({
         : Promise.resolve(null),
       selectedId
         ? getConversationCompanyView(user.id, selectedId)
+        : Promise.resolve(null),
+      selectedId
+        ? getConversationContactExtractionView(user.id, selectedId)
         : Promise.resolve(null),
     ]);
   const hasFilters = Boolean(
@@ -453,6 +467,7 @@ export default async function InboxPage({
               intelligence={intelligence}
               leadMatch={leadMatch}
               companyView={companyView}
+              contactView={contactView}
             />
           ) : (
             <div className="grid min-h-125 place-items-center p-8 text-center text-sm text-[#687080]">
@@ -511,6 +526,7 @@ function ConversationDetail({
   intelligence,
   leadMatch,
   companyView,
+  contactView,
 }: {
   detail: Awaited<ReturnType<typeof getConversationDetail>> & {};
   leads: { id: string; name: string; email: string | null }[];
@@ -518,6 +534,9 @@ function ConversationDetail({
   intelligence: Awaited<ReturnType<typeof getConversationIntelligenceView>>;
   leadMatch: Awaited<ReturnType<typeof evaluateStoredConversationMatch>>;
   companyView: Awaited<ReturnType<typeof getConversationCompanyView>> | null;
+  contactView: Awaited<
+    ReturnType<typeof getConversationContactExtractionView>
+  > | null;
 }) {
   const recipients = [
     ...new Set(
@@ -619,6 +638,12 @@ function ConversationDetail({
           reviewState={detail.reviewState}
           status={detail.status}
         />
+        {contactView && contactView.lead?.id === attachedLead?.id && (
+          <ContactSuggestions
+            key={`${detail.id}:${contactView.lead?.id ?? "none"}`}
+            initialView={contactView}
+          />
+        )}
         {intelligence && (
           <ConversationIntelligenceCard
             key={`${intelligence.analysis?.updatedAt ?? "none"}:${intelligence.job?.updatedAt ?? "none"}`}

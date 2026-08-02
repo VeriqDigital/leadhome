@@ -87,6 +87,14 @@ timestamp.
   analysis completion. Creating a task from an AI suggestion still requires an
   explicit user save and records validated analysis provenance; AI does not
   create tasks or change lead fields automatically.
+- Reviewed Contact Extraction calculation, ambiguity, display, dismissal,
+  recheck, stale rejection, and no-op application create no activity. An
+  explicit successful Apply or Replace uses the existing lead-update builder,
+  so simultaneous approved name, email, and phone changes produce one grouped
+  `CONTACT_INFO_CHANGED` event with actor `USER`, source `INBOX`, and the
+  current conversation relation. Its evidence/prior-state idempotency key
+  prevents duplicate activity from retries or concurrent tabs. See
+  [Reviewed Contact Extraction](./contact-extraction.md).
 
 Classification and review-state changes, AI request/failure states, derived
 overdue transitions, and proposal or attachment detection do not currently

@@ -1,4 +1,8 @@
 import type { ConversationCompanyView } from "@/lib/messaging/company-detection-service";
+import type {
+  ContactField,
+  ConversationContactExtractionView,
+} from "@/lib/messaging/contact-extraction-service";
 
 export type CanonicalInboxControls = {
   id: string;
@@ -49,6 +53,21 @@ export type CompanyDetectionMutationState = {
 
 export const initialCompanyDetectionMutationState:
   CompanyDetectionMutationState = {
+    success: false,
+    message: "",
+  };
+
+export type ContactExtractionMutationState = {
+  success: boolean;
+  changed?: boolean;
+  message: string;
+  contactView?: ConversationContactExtractionView;
+  appliedFields?: ContactField[];
+  skippedFields?: ContactField[];
+};
+
+export const initialContactExtractionMutationState:
+  ContactExtractionMutationState = {
     success: false,
     message: "",
   };

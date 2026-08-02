@@ -131,6 +131,48 @@ attachment and company state; stale or repeated requests cannot overwrite a
 manual edit or create duplicate activity. Only an actual `Lead.company`
 change emits the existing `COMPANY_CHANGED` event.
 
+## Reviewed Contact Extraction
+
+The selected attached conversation can also show at most one reviewable
+candidate for each supported Lead contact field: name, email, and phone. A
+unique credible external inbound sender supplies deterministic email and a
+non-generic display name; the current schema-valid Conversation Intelligence
+contact result may supply review-only name, email, or phone evidence.
+Deterministic metadata has precedence, copied recipients and outbound-only
+threads are ignored, and conflicts are resolved per field rather than by
+discarding the whole contact result. A sender/body person-name conflict hides
+the name while an independently unique sender email and validated analyzed
+phone may remain reviewable.
+
+While the latest analysis or job is queued, running, or waiting to retry, old
+structured contact output is never evaluated as current. The panel shows only
+independently safe deterministic email evidence without actions, or a compact
+refresh explanation. On completion it renders the canonical field-level
+result. Ambiguity keeps an explanatory panel visible even when no action is
+available.
+
+Blank fields use **Apply** and may participate in **Apply available fields**.
+A different populated value is shown as a conflict and requires explicit
+**Replace current value** approval; bulk apply never replaces it. Apply,
+Replace, Dismiss, Dismiss all, and Recheck authenticate and reconstruct the
+canonical suggestion, owner, attachment, evidence fingerprint, and current
+field state. Dismissals store only a candidate hash and evidence fingerprint
+behind owner-composite relations. Suggestion reads, dismissals, ambiguity,
+rechecks, stale requests, and no-ops create no activity; one successful apply
+groups all changed contact fields into the existing `CONTACT_INFO_CHANGED`
+event.
+
+Evaluation is bounded to the selected conversation, 100 inbound message
+metadata rows, one possible 101st-message ID probe, 20 owned mailbox
+identities, one canonical analysis/latest-job lifecycle, and three dismissal
+decisions. An incomplete identity window fails closed for identity fields.
+When Conversation Intelligence is disabled or stale,
+sender-based suggestions may still appear, but AI-derived candidates do not.
+Multi-contact records, alternate fields, signature-specific provenance,
+external enrichment, and automatic application remain deferred. See
+[Reviewed Contact Extraction](./contact-extraction.md) for the full contract.
+The implementation and final Node 24 validation are complete.
+
 Temporary Inbox query-timing diagnostics used during the milestone audit were
 removed. `/dev/messages` remains unavailable in production and shows only the
 newest 20 diagnostic summaries.

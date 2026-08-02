@@ -150,7 +150,8 @@ The model is instructed not to invent company, contact, phone, budget, date,
 currency, or project information. It does not estimate deal value or close
 probability.
 
-Suggested details remain separate from manually maintained Lead fields.
+Suggested details remain separate from manually maintained Lead fields unless
+the owner explicitly approves them through a downstream reviewed workflow.
 Suggested action items do not create Tasks automatically. A user must open the
 editable task form, review or change its prefilled values, and explicitly save
 one task at a time.
@@ -162,6 +163,22 @@ cannot automatically update `Lead.company`. If it conflicts with an otherwise
 automatic known-domain association, the automatic company write is suppressed
 and review is required. This downstream check uses the already persisted
 analysis and makes no additional OpenAI request.
+
+The validated structured contact name, email, and phone may also feed the
+separate [Reviewed Contact Extraction](./contact-extraction.md) panel for an
+attached owned conversation. These values remain AI-derived, review-only
+suggestions. They are eligible only while Intelligence is enabled and the
+canonical analysis is complete, current-version, content-hashed,
+evidence-cited, and current for the stored message count. Deterministic sender
+email/name evidence is evaluated independently and can remain available when
+Intelligence is disabled or stale. No additional provider call or analysis job
+is created for contact review.
+
+During an active latest analysis job, Reviewed Contact Extraction ignores the
+retained prior structured contact object. Its canonical refreshing view may
+show only an independently established sender email without actions; after
+completion, name/email/phone conflicts are resolved separately so one
+ambiguous identity field cannot hide an unrelated valid phone.
 
 ## Completed analysis presentation
 
@@ -181,9 +198,12 @@ index into the owner-scoped task-prefill flow. Opening that form does not
 create a Task; the user must review the fields and explicitly save it. On save,
 the task service rereads the owned analysis and suggestion and records the
 validated AI provenance in the task-created activity. No completed-analysis
-presentation action mutates a Lead. A company can be applied only through the
-separate owner-scoped Inbox company-suggestion control, which rechecks the
-current attachment, blank company, and evidence fingerprint.
+card action mutates a Lead. A company can be applied only through the separate
+owner-scoped Inbox company-suggestion control. Contact details can be changed
+only through the separate owner-scoped Reviewed Contact Extraction Apply or
+explicit Replace action. Both workflows reconstruct canonical evidence and
+current attachment/Lead state rather than trusting structured values supplied
+by the browser.
 
 Successful completion activity uses the analysis completion time, actor `AI`,
 source `AI`, and a job/analysis-derived idempotency key. It contains only safe
@@ -293,7 +313,8 @@ Conversation Intelligence V1 does not implement:
 - email sending or Gmail modification;
 - automatic lead creation or attachment;
 - automatic task creation;
-- automatic CRM-field mutation from AI output;
+- automatic CRM-field mutation from AI output; reviewed contact application
+  remains an explicit owner decision;
 - deal-close probability or inferred deal value;
 - embeddings, vector search, or RAG;
 - attachment analysis, OCR, transcription, or voice;

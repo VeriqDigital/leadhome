@@ -19,6 +19,16 @@ const company = vi.hoisted(() => ({
   dismissConversationCompanySuggestion: vi.fn(),
   recheckConversationCompany: vi.fn(),
 }));
+const contact = vi.hoisted(() => ({
+  applyAvailableConversationContactSuggestions: vi.fn(),
+  applyConversationContactSuggestion: vi.fn(),
+  dismissAllConversationContactSuggestions: vi.fn(),
+  dismissConversationContactSuggestion: vi.fn(),
+  recheckConversationContactSuggestions: vi.fn(),
+}));
+const errors = vi.hoisted(() => ({
+  reportOperationalError: vi.fn(),
+}));
 const cache = vi.hoisted(() => ({
   revalidatePath: vi.fn(),
 }));
@@ -31,6 +41,11 @@ vi.mock(
   "@/lib/messaging/company-detection-service",
   () => company,
 );
+vi.mock(
+  "@/lib/messaging/contact-extraction-service",
+  () => contact,
+);
+vi.mock("@/lib/server-errors", () => errors);
 vi.mock("next/cache", () => cache);
 
 import {
@@ -40,11 +55,13 @@ import {
   dismissConversationMatchAction,
   recheckConversationMatchesAction,
   mutateConversationCompanyAction,
+  mutateConversationContactAction,
   statusInboxAction,
   saveInboxControlsAction,
 } from "./inbox-actions";
 import {
   initialCompanyDetectionMutationState,
+  initialContactExtractionMutationState,
   initialInboxMutationState,
 } from "@/app/inbox/mutation-state";
 
@@ -71,6 +88,9 @@ const canonicalMatch = {
   ],
 } as const;
 const companyFingerprint = "a".repeat(64);
+const contactEvidenceFingerprint = "b".repeat(64);
+const contactReviewFingerprint = "c".repeat(64);
+const secondContactReviewFingerprint = "d".repeat(64);
 const companyView = {
   conversationId: canonical.id,
   lead: {
@@ -89,6 +109,35 @@ const companyView = {
     automaticEligible: false,
   },
   canRecheck: true,
+} as const;
+const contactView = {
+  conversationId: canonical.id,
+  lead: {
+    id: leadId,
+    name: "Mick Enev",
+    email: null,
+    phone: null,
+  },
+  state: "READY",
+  suggestions: [
+    {
+      field: "email",
+      candidateValue: "mick@northstarroofing.com",
+      currentValue: null,
+      source: "external_sender",
+      reasonCode: "EXTERNAL_SENDER_EMAIL",
+      explanation: "Found on the external sender.",
+      evidenceFingerprint: contactEvidenceFingerprint,
+      reviewFingerprint: contactReviewFingerprint,
+      conflict: false,
+    },
+  ],
+  ambiguous: false,
+  ambiguousFields: [],
+  refreshing: false,
+  reviewFingerprint: contactReviewFingerprint,
+  canRecheck: true,
+  evaluatedAt: "2026-08-01T12:00:00.000Z",
 } as const;
 
 describe("Inbox server action contracts", () => {
@@ -649,5 +698,319 @@ describe("Inbox server action contracts", () => {
       success: false,
       message: "Company detection could not be updated. Please try again.",
     });
+  });
+
+  it.each([
+    { intent: "APPLY", replace: false, message: "Contact detail applied." },
+    {
+      intent: "REPLACE",
+      replace: true,
+      message: "Current contact detail replaced.",
+    },
+  ] as const)(
+    "owner-scopes $intent and sends only closed contact suggestion identifiers",
+    async ({ intent, replace, message }) => {
+      const updatedView = {
+        ...contactView,
+        lead: {
+          ...contactView.lead,
+          email: "mick@northstarroofing.com",
+        },
+        state: "NO_SUGGESTIONS" as const,
+        suggestions: [],
+        reviewFingerprint: null,
+      };
+      contact.applyConversationContactSuggestion.mockResolvedValue({
+        changed: true,
+        outcome: "APPLIED",
+        contactView: updatedView,
+        appliedFields: ["email"],
+        skippedFields: [],
+      });
+      const data = new FormData();
+      data.set("intent", intent);
+      data.set("conversationId", canonical.id);
+      data.set("expectedLeadId", leadId);
+      data.set("field", "email");
+      data.set("evidenceFingerprint", contactEvidenceFingerprint);
+      data.set("reviewFingerprint", contactReviewFingerprint);
+      data.set("candidateValue", "attacker@example.com");
+      data.set("source", "untrusted-source");
+      data.set("ownerId", "owner-b");
+
+      const result = await mutateConversationContactAction(
+        initialContactExtractionMutationState,
+        data,
+      );
+
+      expect(contact.applyConversationContactSuggestion).toHaveBeenCalledWith({
+        ownerId: "owner-a",
+        conversationId: canonical.id,
+        expectedLeadId: leadId,
+        field: "email",
+        evidenceFingerprint: contactEvidenceFingerprint,
+        reviewFingerprint: contactReviewFingerprint,
+        replace,
+      });
+      expect(result).toEqual({
+        success: true,
+        changed: true,
+        message,
+        contactView: updatedView,
+        appliedFields: ["email"],
+        skippedFields: [],
+      });
+      for (const path of [
+        "/inbox",
+        "/",
+        "/leads",
+        "/pipeline",
+        `/leads/${leadId}`,
+      ]) {
+        expect(cache.revalidatePath).toHaveBeenCalledWith(path);
+      }
+      expect(cache.revalidatePath).toHaveBeenCalledWith(
+        "/leads/[id]",
+        "page",
+      );
+    },
+  );
+
+  it("submits each displayed safe review token for Apply Available", async () => {
+    contact.applyAvailableConversationContactSuggestions.mockResolvedValue({
+      changed: true,
+      outcome: "PARTIAL",
+      contactView,
+      appliedFields: ["email"],
+      skippedFields: ["phone"],
+    });
+    const data = new FormData();
+    data.set("intent", "APPLY_ALL");
+    data.set("conversationId", canonical.id);
+    data.set("expectedLeadId", leadId);
+    data.append("reviewFingerprint", contactReviewFingerprint);
+    data.append("reviewFingerprint", secondContactReviewFingerprint);
+
+    const result = await mutateConversationContactAction(
+      initialContactExtractionMutationState,
+      data,
+    );
+
+    expect(
+      contact.applyAvailableConversationContactSuggestions,
+    ).toHaveBeenCalledWith({
+      ownerId: "owner-a",
+      conversationId: canonical.id,
+      expectedLeadId: leadId,
+      reviewFingerprints: [
+        contactReviewFingerprint,
+        secondContactReviewFingerprint,
+      ],
+    });
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      changed: true,
+      message:
+        "Available contact details were applied. Changed suggestions were skipped.",
+      appliedFields: ["email"],
+      skippedFields: ["phone"],
+    }));
+  });
+
+  it("owner-scopes individual and bulk dismissals with current review tokens", async () => {
+    contact.dismissConversationContactSuggestion.mockResolvedValue({
+      changed: true,
+      outcome: "DISMISSED",
+      contactView: { ...contactView, suggestions: [] },
+      appliedFields: [],
+      skippedFields: [],
+    });
+    const individual = new FormData();
+    individual.set("intent", "DISMISS");
+    individual.set("conversationId", canonical.id);
+    individual.set("expectedLeadId", leadId);
+    individual.set("field", "email");
+    individual.set("evidenceFingerprint", contactEvidenceFingerprint);
+    individual.set("reviewFingerprint", contactReviewFingerprint);
+
+    await mutateConversationContactAction(
+      initialContactExtractionMutationState,
+      individual,
+    );
+
+    expect(contact.dismissConversationContactSuggestion).toHaveBeenCalledWith({
+      ownerId: "owner-a",
+      conversationId: canonical.id,
+      expectedLeadId: leadId,
+      field: "email",
+      evidenceFingerprint: contactEvidenceFingerprint,
+      reviewFingerprint: contactReviewFingerprint,
+    });
+    expect(cache.revalidatePath).toHaveBeenCalledWith("/inbox");
+    expect(cache.revalidatePath).not.toHaveBeenCalledWith("/leads");
+
+    vi.clearAllMocks();
+    contact.dismissAllConversationContactSuggestions.mockResolvedValue({
+      changed: true,
+      outcome: "DISMISSED",
+      contactView: { ...contactView, suggestions: [] },
+      appliedFields: [],
+      skippedFields: [],
+    });
+    const bulk = new FormData();
+    bulk.set("intent", "DISMISS_ALL");
+    bulk.set("conversationId", canonical.id);
+    bulk.set("expectedLeadId", leadId);
+    bulk.append("reviewFingerprint", contactReviewFingerprint);
+    bulk.append("reviewFingerprint", secondContactReviewFingerprint);
+
+    await mutateConversationContactAction(
+      initialContactExtractionMutationState,
+      bulk,
+    );
+
+    expect(
+      contact.dismissAllConversationContactSuggestions,
+    ).toHaveBeenCalledWith({
+      ownerId: "owner-a",
+      conversationId: canonical.id,
+      expectedLeadId: leadId,
+      reviewFingerprints: [
+        contactReviewFingerprint,
+        secondContactReviewFingerprint,
+      ],
+    });
+  });
+
+  it("owner-scopes Recheck without accepting lead or suggestion values", async () => {
+    contact.recheckConversationContactSuggestions.mockResolvedValue({
+      changed: false,
+      outcome: "NO_CHANGE",
+      contactView,
+      appliedFields: [],
+      skippedFields: [],
+    });
+    const data = new FormData();
+    data.set("intent", "RECHECK");
+    data.set("conversationId", canonical.id);
+    data.set("expectedLeadId", "owner-controlled-value");
+    data.set("candidateValue", "owner-controlled-value");
+
+    const result = await mutateConversationContactAction(
+      initialContactExtractionMutationState,
+      data,
+    );
+
+    expect(contact.recheckConversationContactSuggestions).toHaveBeenCalledWith(
+      "owner-a",
+      canonical.id,
+    );
+    expect(result).toEqual(expect.objectContaining({
+      success: true,
+      changed: false,
+      message: "Contact details checked.",
+      contactView,
+    }));
+  });
+
+  it("rejects unsupported fields and duplicate bulk review tokens", async () => {
+    const malformed = new FormData();
+    malformed.set("intent", "APPLY");
+    malformed.set("conversationId", canonical.id);
+    malformed.set("expectedLeadId", leadId);
+    malformed.set("field", "company");
+    malformed.set("evidenceFingerprint", contactEvidenceFingerprint);
+    malformed.set("reviewFingerprint", contactReviewFingerprint);
+
+    await expect(
+      mutateConversationContactAction(
+        initialContactExtractionMutationState,
+        malformed,
+      ),
+    ).resolves.toEqual({
+      success: false,
+      message: "That contact suggestion is no longer available.",
+    });
+
+    const duplicateBulk = new FormData();
+    duplicateBulk.set("intent", "DISMISS_ALL");
+    duplicateBulk.set("conversationId", canonical.id);
+    duplicateBulk.set("expectedLeadId", leadId);
+    duplicateBulk.append("reviewFingerprint", contactReviewFingerprint);
+    duplicateBulk.append("reviewFingerprint", contactReviewFingerprint);
+    await mutateConversationContactAction(
+      initialContactExtractionMutationState,
+      duplicateBulk,
+    );
+
+    expect(contact.applyConversationContactSuggestion).not.toHaveBeenCalled();
+    expect(
+      contact.dismissAllConversationContactSuggestions,
+    ).not.toHaveBeenCalled();
+  });
+
+  it("returns the canonical view on stale decisions and a safe unexpected failure", async () => {
+    const canonicalLatest = {
+      ...contactView,
+      lead: { ...contactView.lead, email: "manual@example.com" },
+      suggestions: [
+        {
+          ...contactView.suggestions[0],
+          currentValue: "manual@example.com",
+          conflict: true,
+        },
+      ],
+    };
+    contact.applyConversationContactSuggestion.mockResolvedValue({
+      changed: false,
+      outcome: "STALE",
+      contactView: canonicalLatest,
+      appliedFields: [],
+      skippedFields: ["email"],
+    });
+    const stale = new FormData();
+    stale.set("intent", "APPLY");
+    stale.set("conversationId", canonical.id);
+    stale.set("expectedLeadId", leadId);
+    stale.set("field", "email");
+    stale.set("evidenceFingerprint", contactEvidenceFingerprint);
+    stale.set("reviewFingerprint", contactReviewFingerprint);
+
+    const staleResult = await mutateConversationContactAction(
+      initialContactExtractionMutationState,
+      stale,
+    );
+
+    expect(staleResult).toEqual({
+      success: false,
+      changed: false,
+      message:
+        "The attached lead or contact evidence changed. Review the latest suggestions and try again.",
+      contactView: canonicalLatest,
+      appliedFields: [],
+      skippedFields: ["email"],
+    });
+
+    vi.clearAllMocks();
+    contact.recheckConversationContactSuggestions.mockRejectedValue(
+      new Error("secret candidate and database details"),
+    );
+    const failed = new FormData();
+    failed.set("intent", "RECHECK");
+    failed.set("conversationId", canonical.id);
+    const failure = await mutateConversationContactAction(
+      initialContactExtractionMutationState,
+      failed,
+    );
+
+    expect(failure).toEqual({
+      success: false,
+      message: "Contact suggestions could not be updated. Please try again.",
+    });
+    expect(JSON.stringify(failure)).not.toContain("secret candidate");
+    expect(errors.reportOperationalError).toHaveBeenCalledWith(
+      "contact extraction mutation failed",
+      expect.any(Error),
+    );
   });
 });
